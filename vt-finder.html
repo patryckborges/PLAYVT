@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VT Finder — vMix List</title>
+<style>
+  :root{
+    --bg:#101418;
+    --panel:#181e24;
+    --panel2:#1f2730;
+    --line:#2b3540;
+    --txt:#dce4ec;
+    --dim:#7d8b99;
+    --amber:#ffb43a;
+    --green:#38d178;
+    --red:#ff5a5a;
+    --blue:#6fb7ff;
+    --mono:'Consolas','JetBrains Mono',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--txt);
+    font-family:'Segoe UI',system-ui,sans-serif;
+    font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden;
+  }
+
+  /* ---------- Topbar ---------- */
+  header{
+    display:flex;align-items:center;gap:8px;
+    padding:8px 10px;background:var(--panel);border-bottom:1px solid var(--line);
+    flex-wrap:wrap;
+  }
+  header .logo{
+    font-weight:800;letter-spacing:.14em;font-size:12px;color:var(--amber);
+    padding-right:8px;border-right:1px solid var(--line);white-space:nowrap;
+  }
+  select,button,input[type=text]{
+    background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:5px;padding:6px 9px;font-size:12.5px;font-family:inherit;
+  }
+  select:focus,input:focus{outline:1px solid var(--amber)}
+  button{cursor:pointer;white-space:nowrap}
+  button:hover{border-color:var(--amber)}
+  button.warn{border-color:#5a3b1a;color:var(--amber)}
+  button.warn:hover{background:#2a2015}
+  button.toggle-on{border-color:var(--green);color:var(--green)}
+  #status{
+    margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dim);
+    display:flex;align-items:center;gap:6px;
+  }
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block}
+  .dot.ok{background:var(--green)}
+  .dot.pulse{animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* ---------- Painel Auto-Import ---------- */
+  #aiPanel{
+    display:none;background:#131920;border-bottom:1px solid var(--line);
+    padding:10px 12px;
+  }
+  #aiPanel.open{display:block}
+  #aiPanel .grid{
+    display:grid;grid-template-columns:auto 1fr;gap:8px 10px;align-items:center;
+    max-width:820px;
+  }
+  #aiPanel .lbl{font-size:11px;color:var(--dim);letter-spacing:.06em;font-weight:700;white-space:nowrap}
+  #aiPanel .pathline{display:flex;gap:8px;align-items:center;min-width:0}
+  #aiPanel .pathline .val{
+    font-family:var(--mono);font-size:11.5px;color:var(--txt);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;
+  }
+  #aiPanel .pathline .val.none{color:#4d5a66}
+  #aiPanel input[type=text]{width:100%;font-family:var(--mono);font-size:11.5px}
+  #aiPanel .actions{
+    display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;
+  }
+  #aiLog{
+    margin-top:10px;background:#0c1014;border:1px solid var(--line);border-radius:5px;
+    max-height:110px;overflow-y:auto;padding:6px 9px;
+    font-family:var(--mono);font-size:10.5px;line-height:1.6;color:var(--dim);
+  }
+  #aiLog .ok{color:var(--green)}
+  #aiLog .err{color:var(--red)}
+  #aiLog .info{color:var(--blue)}
+  #aiLog .warn{color:var(--amber)}
+
+  /* ---------- Busca ---------- */
+  .searchbar{
+    display:flex;gap:8px;align-items:center;
+    padding:10px;background:var(--panel);border-bottom:1px solid var(--line);
+  }
+  .searchbar input{
+    flex:1;font-size:16px;padding:10px 12px;font-family:var(--mono);
+    background:#0c1014;border:1px solid var(--line);border-radius:6px;
+  }
+  .searchbar input::placeholder{color:#4d5a66;font-family:'Segoe UI',sans-serif}
+  .searchbar select{padding:10px 8px}
+  .hint{font-size:10.5px;color:var(--dim);white-space:nowrap}
+  .hint kbd{
+    background:var(--panel2);border:1px solid var(--line);border-radius:3px;
+    padding:1px 5px;font-family:var(--mono);font-size:10px;
+  }
+
+  /* ---------- Lista ---------- */
+  #listWrap{flex:1;overflow-y:auto;overscroll-behavior:contain}
+  #listWrap::-webkit-scrollbar,#aiLog::-webkit-scrollbar{width:10px}
+  #listWrap::-webkit-scrollbar-thumb,#aiLog::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
+  .row{
+    display:flex;align-items:center;gap:10px;
+    padding:8px 12px;border-bottom:1px solid #141a20;cursor:pointer;user-select:none;
+  }
+  .row:hover{background:var(--panel2)}
+  .row.kbd-focus{outline:1px solid var(--amber);outline-offset:-1px;background:var(--panel2)}
+  .row.on-vmix{background:#0e2418}
+  .row.on-vmix:hover{background:#123020}
+  .row.fresh .name::after{
+    content:'NOVO';margin-left:8px;font-size:9px;font-weight:800;letter-spacing:.1em;
+    color:var(--blue);border:1px solid var(--blue);border-radius:3px;padding:1px 5px;
+  }
+  .row .idx{
+    font-family:var(--mono);font-size:11px;color:var(--dim);
+    min-width:34px;text-align:right;
+  }
+  .row.on-vmix .idx{color:var(--green)}
+  .row .name{
+    flex:1;font-family:var(--mono);font-size:13.5px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .row .name mark{background:transparent;color:var(--amber);font-weight:700}
+  .row .ext{
+    font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.05em;
+    padding:2px 7px;border-radius:3px;border:1px solid var(--line);color:var(--dim);
+  }
+  .row .ext.mp4{color:#6fb7ff;border-color:#2a4258}
+  .row .ext.mov{color:#c79bff;border-color:#3d2f58}
+  .row .ext.mxf{color:#7fe0c3;border-color:#1f4a3d}
+  .row .tag-sel{
+    font-size:9.5px;font-weight:800;letter-spacing:.1em;color:var(--green);
+    border:1px solid var(--green);border-radius:3px;padding:1px 6px;
+  }
+  #empty{
+    padding:48px 20px;text-align:center;color:var(--dim);font-size:13px;line-height:1.7;
+  }
+  #empty b{color:var(--txt)}
+
+  /* ---------- Checkbox estilo vMix ---------- */
+  .row .cb{
+    width:14px;height:14px;border:1px solid var(--line);border-radius:3px;
+    flex:0 0 auto;background:#0c1014;position:relative;
+  }
+  .row .cb.on{border-color:var(--green)}
+  .row .cb.on::after{
+    content:'✔';color:var(--green);font-size:10px;line-height:14px;
+    position:absolute;top:0;left:2px;
+  }
+  .row .cb.seq{border-color:var(--amber);background:#1f1708}
+  .row .cb.seq::after{
+    content:attr(data-n);color:var(--amber);font-size:9px;font-weight:800;
+    line-height:14px;position:absolute;top:0;left:0;right:0;text-align:center;
+  }
+  .row .cb:hover{border-color:var(--amber)}
+
+  /* ---------- Barra de controle da lista (estilo vMix) ---------- */
+  #ctrlBar{
+    display:flex;gap:6px;align-items:center;
+    padding:8px 10px;background:var(--panel);border-top:1px solid var(--line);
+  }
+  #ctrlBar button{min-width:42px;font-family:var(--mono)}
+  #ctrlBar .sep{width:1px;height:22px;background:var(--line);margin:0 6px}
+  #ctrlBar .vbtn{
+    font-family:'Segoe UI',sans-serif;font-size:10.5px;font-weight:800;
+    letter-spacing:.08em;color:var(--dim);
+  }
+  #ctrlBar .vbtn.on{color:var(--green);border-color:var(--green);background:#0e2418}
+
+  /* ---------- Rodapé ---------- */
+  footer{
+    display:flex;align-items:center;gap:12px;
+    padding:7px 12px;background:var(--panel);border-top:1px solid var(--line);
+    font-size:11px;color:var(--dim);font-family:var(--mono);
+  }
+  footer .spacer{flex:1}
+  label.chk{display:flex;align-items:center;gap:5px;cursor:pointer;font-family:'Segoe UI',sans-serif}
+  #aiFootStatus{display:flex;align-items:center;gap:6px}
+
+  /* ---------- Toast ---------- */
+  #toast{
+    position:fixed;bottom:52px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:var(--panel2);border:1px solid var(--amber);color:var(--txt);
+    padding:9px 16px;border-radius:6px;font-size:12.5px;opacity:0;
+    transition:.25s;pointer-events:none;max-width:90%;
+  }
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast.err{border-color:var(--red)}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">VT&nbsp;FINDER</span>
+  <select id="pcSel" title="Máquina"></select>
+  <select id="inputSel" title="Input de lista no vMix">
+    <option value="">— carregar inputs —</option>
+  </select>
+  <button id="btnRefresh" title="Recarregar lista">⟳ Atualizar</button>
+  <button id="btnReorder" class="warn" title="Reescreve a lista no vMix na ordem atual da tela">⚠ Reordenar no vMix</button>
+  <button id="btnAI" title="Copiar automaticamente vídeos da produção para o disco local e adicionar na lista">📥 Auto-Import</button>
+  <span id="status"><span id="dot" class="dot"></span><span id="statusTxt">desconectado</span></span>
+</header>
+
+<!-- ================= AUTO-IMPORT ================= -->
+<div id="aiPanel">
+  <div class="grid">
+    <span class="lbl">PASTA DA PRODUÇÃO</span>
+    <div class="pathline">
+      <button id="btnSrc">Escolher…</button>
+      <span class="val none" id="srcName">nenhuma pasta conectada</span>
+    </div>
+
+    <span class="lbl">PASTA DE DESTINO</span>
+    <div class="pathline">
+      <input type="text" id="destPath" style="flex:1"
+        placeholder="cole aqui o caminho da barra do Explorer, ex: D:\conteudo\copa do mundo 2026\19.07\videos"
+        spellcheck="false">
+      <button id="btnDest">Conectar…</button>
+      <span class="val none" id="destName" style="flex:0 0 auto">—</span>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="btnWatch">▶ LIGAR AUTO-IMPORT</button>
+    <label class="chk"><input type="checkbox" id="chkExisting"> importar também o que JÁ está na pasta</label>
+    <span class="hint">verifica a cada 10s · inclui subpastas · espera o upload do produtor terminar</span>
+  </div>
+
+  <div id="aiLog"><span class="info">Pronto. Conecte a pasta da produção, cole o caminho do destino, clique em Conectar e ligue.</span></div>
+</div>
+
+<div class="searchbar">
+  <input id="search" type="text" placeholder="Digite para buscar o VT…  (ex: gol, entrevista, vinheta)" autocomplete="off" spellcheck="false">
+  <select id="sortSel" title="Ordenação (apenas visual)">
+    <option value="vmix">Ordem do vMix</option>
+    <option value="az">Nome A→Z</option>
+    <option value="za">Nome Z→A</option>
+    <option value="ext">Tipo de arquivo</option>
+  </select>
+  <span class="hint"><kbd>/</kbd> busca &nbsp;<kbd>↑↓</kbd> navega &nbsp;<kbd>Enter</kbd> seleciona</span>
+</div>
+
+<div id="listWrap"></div>
+
+<div id="ctrlBar">
+  <button id="btnRestart" title="Reiniciar item atual">⏮</button>
+  <button id="btnPlayPause" title="Reproduzir / Pausar">▶</button>
+  <button id="btnPrev" title="Item anterior">◀</button>
+  <button id="btnNext" title="Próximo item">▶▶</button>
+  <span class="sep"></span>
+  <button id="btnAutoNext" class="vbtn" title="Reproduzir automaticamente o próximo item da lista">AUTO NEXT</button>
+  <button id="btnAutoFirst" class="vbtn" title="Sempre voltar ao primeiro item ao transicionar pro output">AUTO FIRST</button>
+  <button id="btnLoop" class="vbtn" title="Recomeçar a lista quando chegar ao fim">LOOP</button>
+  <span style="flex:1"></span>
+  <span id="seqInfo" style="display:none;font-family:var(--mono);font-size:11px;color:var(--amber)"></span>
+  <button id="btnSeqPlay" class="vbtn" style="display:none;color:var(--amber);border-color:var(--amber)" title="Reescreve a lista com os VTs marcados no início, na ordem da marcação">▶ MONTAR SEQUÊNCIA</button>
+  <button id="btnSeqClear" class="vbtn" style="display:none" title="Desmarcar todos">✕</button>
+</div>
+
+<footer>
+  <span id="count">0 itens</span>
+  <span id="aiFootStatus"></span>
+  <span class="spacer"></span>
+  <label class="chk"><input type="checkbox" id="autoRef" checked> auto-atualizar (5s)</label>
+</footer>
+
+<div id="toast"></div>
+
+<script>
+/* ================= CONFIG ================= */
+const PCS = {
+  'PD2':'10.10.0.102','PD3':'10.10.0.103','PD4':'10.10.0.104',
+  'PD5':'10.10.0.105','PD6':'10.10.0.106'
+};
+const LS_KEY = 'vtfinder_cfg';
+const VIDEO_EXT = ['mp4','mov','mxf','avi','wmv','mpg','mpeg','ts','mkv'];
+
+let cfg = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+let items = [];
+let view  = [];
+let kbdPos = -1;
+let timer = null;
+let freshNames = new Set();   // marca "NOVO" nos itens recém-importados
+
+const $ = id => document.getElementById(id);
+const base = () => `http://${PCS[cfg.pc]}:8088/api/`;
+
+/* ================= UI: seletor de PC ================= */
+(function initPC(){
+  const sel = $('pcSel');
+  for(const k of Object.keys(PCS)){
+    const o = document.createElement('option');
+    o.value = k; o.textContent = `${k} · ${PCS[k]}`;
+    sel.appendChild(o);
+  }
+  cfg.pc = cfg.pc && PCS[cfg.pc] ? cfg.pc : 'PD2';
+  sel.value = cfg.pc;
+  sel.onchange = () => { cfg.pc = sel.value; save(); loadInputs(); };
+})();
+
+function save(){ localStorage.setItem(LS_KEY, JSON.stringify(cfg)); }
+
+function toast(msg, err=false){
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(t._h);
+  t._h = setTimeout(()=> t.className='', 2600);
+}
+
+function setStatus(ok, txt){
+  $('dot').className = 'dot' + (ok ? ' ok' : '');
+  $('statusTxt').textContent = txt;
+}
+
+/* ================= vMix API ================= */
+async function apiXML(){
+  const r = await fetch(base(), {cache:'no-store'});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  return new DOMParser().parseFromString(await r.text(), 'text/xml');
+}
+
+function fn(name, params={}){
+  const q = new URLSearchParams({Function:name, ...params});
+  return fetch(base()+'?'+q.toString(), {cache:'no-store'});
+}
+
+async function loadInputs(){
+  const sel = $('inputSel');
+  sel.innerHTML = '<option value="">carregando…</option>';
+  try{
+    const xml = await apiXML();
+    setStatus(true, cfg.pc + ' conectado');
+    sel.innerHTML = '';
+    let found = 0;
+    xml.querySelectorAll('inputs > input').forEach(inp=>{
+      const type = inp.getAttribute('type') || '';
+      if(type === 'VideoList' || inp.querySelector(':scope > list')){
+        const o = document.createElement('option');
+        o.value = inp.getAttribute('key');
+        o.textContent = `${inp.getAttribute('number')} · ${inp.getAttribute('shortTitle') || inp.getAttribute('title')}`;
+        sel.appendChild(o);
+        found++;
+      }
+    });
+    if(!found){
+      sel.innerHTML = '<option value="">nenhuma List encontrada</option>';
+      renderEmpty('Nenhum input do tipo <b>List</b> foi encontrado neste vMix.');
+      return;
+    }
+    if(cfg.inputKey && [...sel.options].some(o=>o.value===cfg.inputKey))
+      sel.value = cfg.inputKey;
+    cfg.inputKey = sel.value; save();
+    await loadList();
+  }catch(e){
+    setStatus(false, 'sem conexão');
+    sel.innerHTML = '<option value="">— erro —</option>';
+    renderEmpty(`Não foi possível ler o vMix em <b>${PCS[cfg.pc]}:8088</b>.<br>
+      Verifique se o Web Controller está ativo (Settings → Web Controller).<br>
+      Se o app estiver aberto por HTTPS, libere "Conteúdo não seguro"<br>
+      nas configurações do site no Chrome (cadeado → Configurações do site).`);
+  }
+}
+
+$('inputSel').onchange = () => {
+  cfg.inputKey = $('inputSel').value; save(); loadList();
+};
+
+async function loadList(silent=false){
+  if(!cfg.inputKey) return;
+  try{
+    const xml = await apiXML();
+    setStatus(true, cfg.pc + ' conectado');
+    const inp = [...xml.querySelectorAll('inputs > input')]
+                  .find(i => i.getAttribute('key') === cfg.inputKey);
+    if(!inp){ if(!silent) toast('Input não encontrado — recarregando inputs', true); loadInputs(); return; }
+
+    playState = inp.getAttribute('state') || '';
+    loopOn = (inp.getAttribute('loop') || '').toLowerCase() === 'true';
+    updateCtrlUI();
+
+    const nodes = inp.querySelectorAll(':scope > list > item');
+    items = [...nodes].map((n, i)=>{
+      const path = n.textContent.trim();
+      const name = path.split(/[\\/]/).pop();
+      const dot  = name.lastIndexOf('.');
+      return {
+        idx : i+1,
+        path,
+        name,
+        ext : dot > -1 ? name.slice(dot+1).toLowerCase() : '',
+        selected : n.getAttribute('selected') === 'true',
+        fresh : freshNames.has(name)
+      };
+    });
+    applyFilter();
+  }catch(e){
+    setStatus(false, 'sem conexão');
+    if(!silent) toast('Falha ao ler a lista: '+e.message, true);
+  }
+}
+
+/* ================= Filtro / ordenação / render ================= */
+function norm(s){
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+}
+function terms(){ return norm($('search').value.trim()).split(/\s+/).filter(Boolean); }
+
+function applyFilter(){
+  const t = terms();
+  view = items.filter(it => !t.length || t.every(x => norm(it.name).includes(x)));
+
+  const mode = $('sortSel').value;
+  if(mode==='az')  view.sort((a,b)=> a.name.localeCompare(b.name,'pt'));
+  if(mode==='za')  view.sort((a,b)=> b.name.localeCompare(a.name,'pt'));
+  if(mode==='ext') view.sort((a,b)=> a.ext.localeCompare(b.ext) || a.name.localeCompare(b.name,'pt'));
+  if(mode==='vmix')view.sort((a,b)=> a.idx - b.idx);
+
+  kbdPos = view.length ? 0 : -1;
+  render();
+}
+
+function highlight(name, t){
+  let out = escapeHTML(name);
+  t.forEach(x=>{
+    const re = new RegExp('('+x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');
+    out = out.replace(re,'<mark>$1</mark>');
+  });
+  return out;
+}
+function escapeHTML(s){ return s.replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render(){
+  const wrap = $('listWrap');
+  const t = terms();
+  if(!view.length){
+    renderEmpty(items.length
+      ? 'Nenhum VT corresponde à busca.'
+      : 'A lista está vazia ou ainda não foi carregada.');
+    $('count').textContent = `0 / ${items.length} itens`;
+    return;
+  }
+  wrap.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  view.forEach((it, vi)=>{
+    const row = document.createElement('div');
+    const seqPos = seq.indexOf(it.path);
+    row.className = 'row'
+      + (it.selected ? ' on-vmix' : '')
+      + (it.fresh ? ' fresh' : '')
+      + (vi === kbdPos ? ' kbd-focus' : '');
+    row.innerHTML = `
+      <span class="cb${it.selected ? ' on' : ''}${seqPos > -1 ? ' seq' : ''}" data-n="${seqPos+1}"
+            title="Marcar pra rodar em sequência"></span>
+      <span class="idx">${String(it.idx).padStart(3,'0')}</span>
+      <span class="name" title="${escapeHTML(it.path)}">${highlight(it.name, t)}</span>
+      ${it.selected ? '<span class="tag-sel">NO AR</span>' : ''}
+      <span class="ext ${it.ext}">${it.ext.toUpperCase()||'—'}</span>`;
+    row.onclick = ()=> selectItem(it);
+    row.querySelector('.cb').onclick = (e)=>{ e.stopPropagation(); toggleSeq(it); };
+    frag.appendChild(row);
+  });
+  wrap.appendChild(frag);
+  $('count').textContent = `${view.length} / ${items.length} itens`;
+}
+
+function renderEmpty(html){
+  $('listWrap').innerHTML = `<div id="empty">${html}</div>`;
+}
+
+/* ================= Ações ================= */
+async function selectItem(it){
+  try{
+    await fn('SelectIndex', {Input: cfg.inputKey, Value: it.idx});
+    toast(`▶ Selecionado no vMix: ${it.name} (item ${it.idx})`);
+    items.forEach(x=> x.selected = (x === it));
+    render();
+  }catch(e){
+    toast('Falha ao selecionar: '+e.message, true);
+  }
+}
+
+$('btnReorder').onclick = async ()=>{
+  if(!cfg.inputKey || !items.length) return;
+  if($('search').value.trim()){
+    toast('Limpe a busca antes de reordenar — a reescrita usa a lista completa.', true);
+    return;
+  }
+  const mode = $('sortSel').options[$('sortSel').selectedIndex].text;
+  const ok = confirm(
+    `⚠ REORDENAR A LISTA NO vMIX\n\n` +
+    `A lista será APAGADA e reescrita na ordem: "${mode}" (${items.length} itens).\n` +
+    `NÃO faça isso com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
+  );
+  if(!ok) return;
+
+  const ordered = [...view];
+  try{
+    setStatus(true, 'reescrevendo…');
+    await fn('ListRemoveAll', {Input: cfg.inputKey});
+    for(const it of ordered){
+      await fn('ListAdd', {Input: cfg.inputKey, Value: it.path});
+    }
+    toast(`✔ Lista reescrita no vMix (${ordered.length} itens)`);
+    await loadList();
+  }catch(e){
+    toast('Erro ao reordenar: '+e.message+' — confira a lista no vMix!', true);
+  }
+};
+
+$('btnRefresh').onclick = ()=> loadList();
+
+/* ================= Barra de controle (estilo vMix) ================= */
+let playState = '';   // Running / Paused / Completed
+let loopOn = false;
+
+// Auto Next / Auto First: o vMix não expõe o estado desses botões no XML,
+// então o app guarda o estado por lista (padrão do vMix: Auto Next ligado,
+// Auto First desligado) e envia On/Off explícito pra ficarem sincronizados.
+function flags(){
+  cfg.listFlags = cfg.listFlags || {};
+  if(!cfg.listFlags[cfg.inputKey]) cfg.listFlags[cfg.inputKey] = {an:true, af:false};
+  return cfg.listFlags[cfg.inputKey];
+}
+
+function updateCtrlUI(){
+  const f = cfg.inputKey ? flags() : {an:true, af:false};
+  $('btnLoop').classList.toggle('on', loopOn);
+  $('btnAutoNext').classList.toggle('on', f.an);
+  $('btnAutoFirst').classList.toggle('on', f.af);
+  const running = playState === 'Running';
+  $('btnPlayPause').textContent = running ? '❚❚' : '▶';
+  $('btnPlayPause').title = running ? 'Pausar' : 'Reproduzir';
+}
+
+async function ctrl(fname, refreshDelay=300){
+  if(!cfg.inputKey) return;
+  try{
+    await fn(fname, {Input: cfg.inputKey});
+    if(refreshDelay) setTimeout(()=> loadList(true), refreshDelay);
+  }catch(e){ toast('Falha: '+e.message, true); }
+}
+
+$('btnPlayPause').onclick = ()=> ctrl('PlayPause');
+$('btnRestart').onclick   = ()=> ctrl('Restart');
+$('btnPrev').onclick      = ()=> ctrl('PreviousItem');
+$('btnNext').onclick      = ()=> ctrl('NextItem');
+$('btnLoop').onclick      = ()=> ctrl('Loop');   // estado real vem do XML no refresh
+
+$('btnAutoNext').onclick = async ()=>{
+  if(!cfg.inputKey) return;
+  const f = flags(); f.an = !f.an; save();
+  await fn(f.an ? 'AutoPlayNextOn' : 'AutoPlayNextOff', {Input: cfg.inputKey});
+  toast('Auto Next ' + (f.an ? 'LIGADO' : 'DESLIGADO'));
+  updateCtrlUI();
+};
+
+$('btnAutoFirst').onclick = async ()=>{
+  if(!cfg.inputKey) return;
+  const f = flags(); f.af = !f.af; save();
+  await fn(f.af ? 'AutoPlayFirstOn' : 'AutoPlayFirstOff', {Input: cfg.inputKey});
+  toast('Auto First ' + (f.af ? 'LIGADO' : 'DESLIGADO'));
+  updateCtrlUI();
+};
+
+/* ================= Sequência (multi-check) ================= */
+let seq = [];   // paths dos VTs marcados, na ordem da marcação
+
+function toggleSeq(it){
+  const i = seq.indexOf(it.path);
+  if(i > -1) seq.splice(i, 1); else seq.push(it.path);
+  render();
+  updateSeqUI();
+}
+
+function updateSeqUI(){
+  const on = seq.length > 0;
+  $('seqInfo').style.display = on ? '' : 'none';
+  $('btnSeqPlay').style.display = on ? '' : 'none';
+  $('btnSeqClear').style.display = on ? '' : 'none';
+  $('seqInfo').textContent = `SEQ: ${seq.length} VT${seq.length>1?'s':''}`;
+}
+
+$('btnSeqClear').onclick = ()=>{ seq = []; render(); updateSeqUI(); };
+
+$('btnSeqPlay').onclick = async ()=>{
+  if(!seq.length || !cfg.inputKey) return;
+  const ok = confirm(
+    `▶ MONTAR SEQUÊNCIA (${seq.length} VTs)\n\n` +
+    `A lista será reescrita com os VTs marcados no INÍCIO, na ordem da marcação (1, 2, 3…), ` +
+    `com o VT 1 já selecionado e Auto Next ligado.\n` +
+    `Os demais vídeos continuam na lista, logo depois da sequência.\n\n` +
+    `NÃO use com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
+  );
+  if(!ok) return;
+  try{
+    setStatus(true, 'montando sequência…');
+    const rest = items.filter(it => !seq.includes(it.path)).map(it => it.path);
+    const order = [...seq, ...rest];
+    await fn('ListRemoveAll', {Input: cfg.inputKey});
+    for(const p of order){
+      await fn('ListAdd', {Input: cfg.inputKey, Value: p});
+    }
+    const f = flags(); f.an = true; save();
+    await fn('AutoPlayNextOn', {Input: cfg.inputKey});
+    await fn('SelectIndex', {Input: cfg.inputKey, Value: 1});
+    toast(`✔ Sequência montada: ${seq.length} VTs no início da lista, VT 1 selecionado`);
+    seq = [];
+    updateSeqUI();
+    updateCtrlUI();
+    await loadList();
+  }catch(e){
+    toast('Erro ao montar sequência: '+e.message+' — confira a lista no vMix!', true);
+  }
+};
+
+/* ================= Teclado ================= */
+document.addEventListener('keydown', e=>{
+  const inField = ['INPUT','SELECT'].includes(document.activeElement.tagName);
+  const inSearch = document.activeElement === $('search');
+  if(e.key === '/' && !inField){ e.preventDefault(); $('search').focus(); $('search').select(); return; }
+  if(e.key === 'Escape' && inSearch){ $('search').value=''; applyFilter(); return; }
+  if(inField && !inSearch) return;
+
+  if(['ArrowDown','ArrowUp','Enter'].includes(e.key)){
+    if(!view.length) return;
+    if(e.key==='ArrowDown'){ e.preventDefault(); kbdPos = Math.min(kbdPos+1, view.length-1); }
+    if(e.key==='ArrowUp'){   e.preventDefault(); kbdPos = Math.max(kbdPos-1, 0); }
+    if(e.key==='Enter'){     e.preventDefault(); if(kbdPos>-1) selectItem(view[kbdPos]); return; }
+    render();
+    const el = document.querySelectorAll('.row')[kbdPos];
+    if(el) el.scrollIntoView({block:'nearest'});
+  }
+});
+
+$('search').addEventListener('input', applyFilter);
+$('sortSel').addEventListener('change', applyFilter);
+
+/* ================= Auto refresh da lista ================= */
+function setAuto(){
+  clearInterval(timer);
+  if($('autoRef').checked){
+    timer = setInterval(()=>{
+      if(document.activeElement !== $('search') || !$('search').value)
+        loadList(true);
+    }, 5000);
+  }
+}
+$('autoRef').onchange = setAuto;
+
+/* =====================================================================
+   AUTO-IMPORT  (File System Access API — Chrome/Edge)
+   share da produção  ->  disco local  ->  ListAdd no vMix
+===================================================================== */
+let srcHandle = null, destHandle = null;
+let watching = false;
+let aiTimer = null;
+let knownFiles = new Map();   // relpath -> {size, mtime, stable, done}
+let scanning = false;
+
+const AI_INTERVAL = 10000;    // 10s
+const STABLE_SCANS = 2;       // nº de varreduras com tamanho igual antes de copiar
+
+/* ---- IndexedDB pra lembrar as pastas entre sessões ---- */
+function idb(){
+  return new Promise((res, rej)=>{
+    const r = indexedDB.open('vtfinder', 1);
+    r.onupgradeneeded = ()=> r.result.createObjectStore('handles');
+    r.onsuccess = ()=> res(r.result);
+    r.onerror = ()=> rej(r.error);
+  });
+}
+async function idbSet(k, v){
+  const db = await idb();
+  return new Promise((res, rej)=>{
+    const tx = db.transaction('handles','readwrite');
+    tx.objectStore('handles').put(v, k);
+    tx.oncomplete = res; tx.onerror = ()=> rej(tx.error);
+  });
+}
+async function idbGet(k){
+  const db = await idb();
+  return new Promise((res, rej)=>{
+    const rq = db.transaction('handles').objectStore('handles').get(k);
+    rq.onsuccess = ()=> res(rq.result || null);
+    rq.onerror = ()=> rej(rq.error);
+  });
+}
+
+function aiLog(msg, cls=''){
+  const box = $('aiLog');
+  const line = document.createElement('div');
+  if(cls) line.className = cls;
+  line.textContent = `[${new Date().toLocaleTimeString('pt-BR')}] ${msg}`;
+  box.appendChild(line);
+  while(box.children.length > 80) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function aiSupported(){
+  return 'showDirectoryPicker' in window && window.isSecureContext;
+}
+
+$('btnAI').onclick = ()=>{
+  $('aiPanel').classList.toggle('open');
+  if($('aiPanel').classList.contains('open') && !aiSupported()){
+    aiLog('Este recurso precisa de Chrome/Edge e de a página estar em HTTPS ou localhost.', 'err');
+  }
+};
+
+async function verifyPermission(handle, write){
+  const opts = {mode: write ? 'readwrite' : 'read'};
+  if(await handle.queryPermission(opts) === 'granted') return true;
+  return (await handle.requestPermission(opts)) === 'granted';
+}
+
+function updateAIUI(){
+  $('srcName').textContent  = srcHandle  ? '📁 ' + srcHandle.name  : 'nenhuma pasta conectada';
+  $('srcName').className    = 'val' + (srcHandle ? '' : ' none');
+  $('destName').textContent = destHandle ? '✔ validada' : '—';
+  $('destName').className   = 'val' + (destHandle ? '' : ' none');
+  const b = $('btnWatch');
+  b.textContent = watching ? '■ DESLIGAR AUTO-IMPORT' : '▶ LIGAR AUTO-IMPORT';
+  b.className = watching ? 'toggle-on' : '';
+  $('aiFootStatus').innerHTML = watching
+    ? `<span class="dot ok pulse"></span> auto-import ativo (${srcHandle?srcHandle.name:''})`
+    : '';
+}
+
+$('btnSrc').onclick = async ()=>{
+  try{
+    srcHandle = await showDirectoryPicker({mode:'read'});
+    await idbSet('src', srcHandle);
+    aiLog(`Pasta da produção conectada: ${srcHandle.name}`, 'info');
+    updateAIUI();
+  }catch(e){ /* cancelado */ }
+};
+
+$('btnDest').onclick = async ()=>{
+  const typed = $('destPath').value.trim().replace(/[\\/]+$/,'');
+  if(!typed){
+    aiLog('Cole primeiro o caminho da pasta (copie da barra de endereço do Explorer) e depois clique em Conectar.', 'err');
+    $('destPath').focus();
+    return;
+  }
+  try{
+    const h = await showDirectoryPicker({mode:'readwrite'});
+    const lastSeg = typed.split(/[\\/]/).pop();
+    if(norm(h.name) !== norm(lastSeg)){
+      aiLog(`A pasta escolhida ("${h.name}") não bate com o final do caminho digitado ("${lastSeg}"). Escolha exatamente a mesma pasta do caminho.`, 'err');
+      return;
+    }
+    destHandle = h;
+    cfg.destPath = typed;
+    $('destPath').value = typed;
+    save();
+    await idbSet('dest', h);
+    aiLog(`✔ Pasta de destino conectada e validada: ${typed}`, 'ok');
+    updateAIUI();
+  }catch(e){ /* cancelado */ }
+};
+
+$('destPath').value = cfg.destPath || '';
+$('destPath').addEventListener('change', ()=>{
+  const typed = $('destPath').value.trim().replace(/[\\/]+$/,'');
+  $('destPath').value = typed;
+  if(destHandle && norm(destHandle.name) !== norm(typed.split(/[\\/]/).pop())){
+    destHandle = null;
+    aiLog('O caminho mudou — clique em Conectar de novo pra validar a nova pasta.', 'warn');
+  }
+  cfg.destPath = typed; save();
+  updateAIUI();
+});
+
+/* ---- varredura recursiva da origem ---- */
+async function* walk(dir, prefix=''){
+  for await (const entry of dir.values()){
+    if(entry.kind === 'file') yield [prefix + entry.name, entry];
+    else if(entry.kind === 'directory') yield* walk(entry, prefix + entry.name + '/');
+  }
+}
+
+function isVideo(name){
+  const dot = name.lastIndexOf('.');
+  return dot > -1 && VIDEO_EXT.includes(name.slice(dot+1).toLowerCase());
+}
+
+async function scan(baseline=false){
+  if(scanning) return;
+  scanning = true;
+  try{
+    for await (const [rel, handle] of walk(srcHandle)){
+      if(!isVideo(handle.name)) continue;
+      let f;
+      try{ f = await handle.getFile(); }catch(e){ continue; }  // ainda em cópia/lock
+      const prev = knownFiles.get(rel);
+      if(!prev){
+        knownFiles.set(rel, {size:f.size, mtime:f.lastModified, stable:0, done:baseline});
+        if(!baseline) aiLog(`Detectado: ${handle.name} — aguardando fim do upload…`, 'info');
+        continue;
+      }
+      if(prev.done) continue;
+      if(f.size === prev.size && f.lastModified === prev.mtime && f.size > 0){
+        prev.stable++;
+        if(prev.stable >= STABLE_SCANS - 1){
+          prev.done = true;                       // marca antes pra não duplicar
+          const ok = await importFile(handle, f);
+          if(!ok) prev.done = false;              // tenta de novo no próximo ciclo
+        }
+      }else{
+        prev.size = f.size; prev.mtime = f.lastModified; prev.stable = 0;
+      }
+    }
+  }catch(e){
+    aiLog('Erro na varredura: '+e.message, 'err');
+  }
+  scanning = false;
+}
+
+/* ---- copia 1 arquivo e adiciona no vMix ---- */
+async function importFile(srcFileHandle, file){
+  const name = srcFileHandle.name;
+  try{
+    // colisão de nome no destino?
+    let finalName = name;
+    try{
+      const existing = await destHandle.getFileHandle(name);
+      const ef = await existing.getFile();
+      if(ef.size === file.size){
+        aiLog(`${name} já existe no destino (mesmo tamanho) — pulando cópia.`, 'warn');
+        return true;
+      }
+      const dot = name.lastIndexOf('.');
+      const stem = dot>-1 ? name.slice(0,dot) : name;
+      const ext  = dot>-1 ? name.slice(dot) : '';
+      let n = 1;
+      while(true){
+        finalName = `${stem}_${n}${ext}`;
+        try{ await destHandle.getFileHandle(finalName); n++; }
+        catch(e){ break; }
+      }
+    }catch(e){ /* não existe: segue com o nome original */ }
+
+    aiLog(`Copiando ${name} (${(file.size/1048576).toFixed(0)} MB)…`, 'info');
+    const dest = await destHandle.getFileHandle(finalName, {create:true});
+    const writable = await dest.createWritable();
+    await file.stream().pipeTo(writable);   // pipeTo fecha o writable
+    aiLog(`✔ Copiado: ${finalName}`, 'ok');
+
+    // adiciona no vMix com o caminho REAL do disco
+    if(!cfg.destPath){
+      aiLog('Caminho real do destino não preenchido — arquivo copiado, mas NÃO adicionado ao vMix.', 'err');
+      return true;
+    }
+    if(!cfg.inputKey){
+      aiLog('Nenhum input List selecionado no topo — arquivo copiado, mas NÃO adicionado ao vMix.', 'err');
+      return true;
+    }
+    const fullPath = cfg.destPath + '\\' + finalName;
+    await fn('ListAdd', {Input: cfg.inputKey, Value: fullPath});
+    aiLog(`✔ Adicionado na lista do vMix: ${fullPath}`, 'ok');
+    freshNames.add(finalName);
+    toast(`📥 Novo VT na lista: ${finalName}`);
+    loadList(true);
+    return true;
+  }catch(e){
+    aiLog(`ERRO ao importar ${name}: ${e.message}`, 'err');
+    return false;
+  }
+}
+
+/* ---- liga / desliga ---- */
+$('btnWatch').onclick = async ()=>{
+  if(watching){
+    watching = false;
+    clearInterval(aiTimer);
+    aiLog('Auto-import desligado.', 'warn');
+    updateAIUI();
+    return;
+  }
+  if(!aiSupported()){ aiLog('Navegador sem suporte (use Chrome/Edge, página em HTTPS ou localhost).', 'err'); return; }
+  if(!srcHandle || !destHandle){ aiLog('Conecte a pasta da produção E a pasta de destino primeiro.', 'err'); return; }
+  if(!cfg.destPath){ aiLog('Preencha o caminho REAL da pasta de destino (ex: D:\\conteudo\\...\\videos).', 'err'); return; }
+  if(!cfg.inputKey){ aiLog('Selecione o input List no topo da página.', 'err'); return; }
+
+  if(!await verifyPermission(srcHandle, false)){ aiLog('Permissão negada na pasta da produção.', 'err'); return; }
+  if(!await verifyPermission(destHandle, true)){ aiLog('Permissão negada na pasta de destino.', 'err'); return; }
+
+  knownFiles.clear();
+  const importExisting = $('chkExisting').checked;
+  aiLog('Varredura inicial…', 'info');
+  await scan(!importExisting);   // baseline=true ignora o que já existe
+  const total = knownFiles.size;
+  aiLog(importExisting
+    ? `${total} arquivo(s) encontrados — todos entrarão na fila de importação.`
+    : `${total} arquivo(s) já existentes serão ignorados. Vigiando novos…`, 'info');
+
+  watching = true;
+  aiTimer = setInterval(scan, AI_INTERVAL);
+  updateAIUI();
+};
+
+/* ---- reconecta pastas salvas de sessões anteriores ---- */
+(async function restoreHandles(){
+  if(!aiSupported()) return;
+  try{
+    const s = await idbGet('src');
+    const d = await idbGet('dest');
+    if(s || d){
+      srcHandle = s; destHandle = d;
+      updateAIUI();
+      aiLog('Pastas da última sessão lembradas — ao ligar, o navegador pode pedir pra confirmar o acesso (1 clique).', 'info');
+    }
+  }catch(e){}
+})();
+
+/* ---- aviso se fechar com watcher ligado ---- */
+window.addEventListener('beforeunload', e=>{
+  if(watching){ e.preventDefault(); e.returnValue = ''; }
+});
+
+/* ================= Boot ================= */
+loadInputs();
+setAuto();
+updateAIUI();
+</script>
+</body>
+</html>
