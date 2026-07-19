@@ -114,6 +114,13 @@
   .row.kbd-focus{outline:1px solid var(--amber);outline-offset:-1px;background:var(--panel2)}
   .row.on-vmix{background:#0e2418}
   .row.on-vmix:hover{background:#123020}
+  .row.match{
+    background:#0f2b1a;
+    box-shadow:inset 4px 0 0 var(--green), 0 0 0 2px var(--green);
+    z-index:1;position:relative;
+  }
+  .row.match:hover{background:#143a24}
+  .row.match.kbd-focus{outline-color:var(--green);box-shadow:inset 4px 0 0 var(--green), 0 0 0 2px var(--green), inset 0 0 0 1px var(--amber)}
   .row.fresh .name::after{
     content:'NOVO';margin-left:8px;font-size:9px;font-weight:800;letter-spacing:.1em;
     color:var(--blue);border:1px solid var(--blue);border-radius:3px;padding:1px 5px;
@@ -160,6 +167,25 @@
     line-height:14px;position:absolute;top:0;left:0;right:0;text-align:center;
   }
   .row .cb:hover{border-color:var(--amber)}
+
+  .row .arrows{display:none;flex-direction:column;gap:1px;flex:0 0 auto}
+  .row .arrows button{
+    background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+    width:22px;height:11px;padding:0;font-size:8px;line-height:1;cursor:pointer;
+    border-radius:2px;
+  }
+  .row .arrows button:hover{border-color:var(--amber);color:var(--amber)}
+  body.editing .row .arrows{display:flex}
+  body.editing .row{cursor:default}
+  body.editing .row .name{cursor:default}
+  body.editing #ctrlBar #btnEdit{background:#2a2015;border-color:var(--amber);color:var(--amber)}
+  .row.hidden-item{opacity:.45}
+  .row.hidden-item .name{text-decoration:line-through;color:var(--dim)}
+
+  .pending-badge{
+    background:var(--amber);color:#000;font-weight:800;font-size:10px;letter-spacing:.08em;
+    padding:2px 7px;border-radius:3px;margin-left:6px;
+  }
 
   /* ---------- Barra de controle da lista (estilo vMix) ---------- */
   #ctrlBar{
@@ -281,10 +307,11 @@
   <button id="btnAutoNext" class="vbtn" title="Reproduzir automaticamente o próximo item da lista">AUTO NEXT</button>
   <button id="btnAutoFirst" class="vbtn" title="Sempre voltar ao primeiro item ao transicionar pro output">AUTO FIRST</button>
   <button id="btnLoop" class="vbtn" title="Recomeçar a lista quando chegar ao fim">LOOP</button>
-  <span style="flex:1"></span>
-  <span id="seqInfo" style="display:none;font-family:var(--mono);font-size:11px;color:var(--amber)"></span>
-  <button id="btnSeqPlay" class="vbtn" style="display:none;color:var(--amber);border-color:var(--amber)" title="Reescreve a lista com os VTs marcados no início, na ordem da marcação">▶ MONTAR SEQUÊNCIA</button>
-  <button id="btnSeqClear" class="vbtn" style="display:none" title="Desmarcar todos">✕</button>
+  <span class="sep"></span>
+  <button id="btnEdit" class="vbtn" title="Modo edição: marcar/desmarcar e reordenar">✎ EDITAR</button>
+  <button id="btnApply" class="vbtn" style="display:none;color:var(--green);border-color:var(--green)" title="Aplicar as alterações à lista do vMix">✔ APLICAR</button>
+  <button id="btnCancel" class="vbtn" style="display:none;color:var(--red);border-color:var(--red)" title="Descartar alterações">✕ CANCELAR</button>
+  <span id="pendingBadge" style="display:none" class="pending-badge">0 mudanças</span>
 </div>
 
 <footer>
@@ -505,6 +532,7 @@ async function loadList(silent=false){
         name,
         ext : dot > -1 ? name.slice(dot+1).toLowerCase() : '',
         selected : n.getAttribute('selected') === 'true',
+        enabled  : n.getAttribute('enabled') !== 'false',
         fresh : freshNames.has(name)
       };
     });
@@ -523,7 +551,9 @@ function terms(){ return norm($('search').value.trim()).split(/\s+/).filter(Bool
 
 function applyFilter(){
   const t = terms();
-  view = items.filter(it => !t.length || t.every(x => norm(it.name).includes(x)));
+  // não filtra mais — mostra tudo, marca quem dá match
+  view = items.slice();
+  view.forEach(it => it.match = !t.length ? false : t.every(x => norm(it.name).includes(x)));
 
   const mode = $('sortSel').value;
   if(mode==='az')  view.sort((a,b)=> a.name.localeCompare(b.name,'pt'));
@@ -531,8 +561,21 @@ function applyFilter(){
   if(mode==='ext') view.sort((a,b)=> a.ext.localeCompare(b.ext) || a.name.localeCompare(b.name,'pt'));
   if(mode==='vmix')view.sort((a,b)=> a.idx - b.idx);
 
-  kbdPos = view.length ? 0 : -1;
+  // se há busca ativa, foco vai pro primeiro match; senão, vai pro início
+  if(t.length){
+    const firstMatch = view.findIndex(it => it.match);
+    kbdPos = firstMatch > -1 ? firstMatch : -1;
+  }else{
+    kbdPos = view.length ? 0 : -1;
+  }
   render();
+  // scroll pro primeiro match ao digitar
+  if(t.length && kbdPos > -1){
+    setTimeout(()=>{
+      const el = document.querySelectorAll('.row')[kbdPos];
+      if(el) el.scrollIntoView({block:'center'});
+    }, 0);
+  }
 }
 
 function highlight(name, t){
@@ -559,24 +602,38 @@ function render(){
   const frag = document.createDocumentFragment();
   view.forEach((it, vi)=>{
     const row = document.createElement('div');
-    const seqPos = seq.indexOf(it.path);
     row.className = 'row'
       + (it.selected ? ' on-vmix' : '')
+      + (it.match ? ' match' : '')
       + (it.fresh ? ' fresh' : '')
-      + (vi === kbdPos ? ' kbd-focus' : '');
+      + (vi === kbdPos ? ' kbd-focus' : '')
+      + (!it.enabled ? ' hidden-item' : '');
     row.innerHTML = `
-      <span class="cb${it.selected ? ' on' : ''}${seqPos > -1 ? ' seq' : ''}" data-n="${seqPos+1}"
-            title="Marcar pra rodar em sequência"></span>
+      <span class="cb${it.enabled ? ' on' : ''}"
+            title="${editing ? 'Marcar/desmarcar (aplicará na lista do vMix)' : 'Estado atual: ' + (it.enabled ? 'marcado' : 'desmarcado — pulado pelo Auto Next')}"></span>
+      <span class="arrows">
+        <button data-dir="up"   title="Mover para cima">▲</button>
+        <button data-dir="down" title="Mover para baixo">▼</button>
+      </span>
       <span class="idx">${String(it.idx).padStart(3,'0')}</span>
       <span class="name" title="${escapeHTML(it.path)}">${highlight(it.name, t)}</span>
       ${it.selected ? '<span class="tag-sel">NO AR</span>' : ''}
       <span class="ext ${it.ext}">${it.ext.toUpperCase()||'—'}</span>`;
-    row.onclick = ()=> selectItem(it);
-    row.querySelector('.cb').onclick = (e)=>{ e.stopPropagation(); toggleSeq(it); };
+    if(!editing){
+      row.onclick = ()=> selectItem(it);
+    }else{
+      row.querySelector('.cb').onclick = (e)=>{ e.stopPropagation(); toggleEnabled(it); };
+      row.querySelectorAll('.arrows button').forEach(b=>{
+        b.onclick = (e)=>{ e.stopPropagation(); moveItem(it, b.dataset.dir); };
+      });
+    }
     frag.appendChild(row);
   });
   wrap.appendChild(frag);
-  $('count').textContent = `${view.length} / ${items.length} itens`;
+  const matched = view.filter(it => it.match).length;
+  $('count').textContent = t.length
+    ? `${matched} encontrado${matched!==1?'s':''} / ${items.length} itens`
+    : `${items.length} itens`;
 }
 
 function renderEmpty(html){
@@ -678,54 +735,121 @@ $('btnAutoFirst').onclick = async ()=>{
   updateCtrlUI();
 };
 
-/* ================= Sequência (multi-check) ================= */
-let seq = [];   // paths dos VTs marcados, na ordem da marcação
+/* ================= Modo Edição (marcar/desmarcar + reordenar) ================= */
+let editing = false;
+let snapshot = null;      // cópia dos items pra permitir cancelar
 
-function toggleSeq(it){
-  const i = seq.indexOf(it.path);
-  if(i > -1) seq.splice(i, 1); else seq.push(it.path);
-  render();
-  updateSeqUI();
+function updateEditUI(){
+  document.body.classList.toggle('editing', editing);
+  $('btnEdit').style.display = editing ? 'none' : '';
+  $('btnApply').style.display = editing ? '' : 'none';
+  $('btnCancel').style.display = editing ? '' : 'none';
+  const changes = editing ? countChanges() : 0;
+  $('pendingBadge').style.display = editing ? '' : 'none';
+  $('pendingBadge').textContent = changes === 0 ? 'sem mudanças' : `${changes} mudança${changes>1?'s':''}`;
 }
 
-function updateSeqUI(){
-  const on = seq.length > 0;
-  $('seqInfo').style.display = on ? '' : 'none';
-  $('btnSeqPlay').style.display = on ? '' : 'none';
-  $('btnSeqClear').style.display = on ? '' : 'none';
-  $('seqInfo').textContent = `SEQ: ${seq.length} VT${seq.length>1?'s':''}`;
+function countChanges(){
+  if(!snapshot) return 0;
+  let n = 0;
+  for(let i=0;i<items.length;i++){
+    if(!snapshot[i] || snapshot[i].path !== items[i].path) n++;   // reordenado
+    else if(snapshot[i].enabled !== items[i].enabled) n++;        // marcado/desmarcado
+  }
+  return n;
 }
 
-$('btnSeqClear').onclick = ()=>{ seq = []; render(); updateSeqUI(); };
+$('btnEdit').onclick = ()=>{
+  if(!items.length){ toast('Carregue uma lista primeiro.', true); return; }
+  editing = true;
+  // traz de volta os desmarcados guardados anteriormente pra poder re-habilitar
+  const stored = (cfg.disabled || {})[cfg.inputKey] || [];
+  const paths = new Set(items.map(it => it.path));
+  stored.forEach(p=>{
+    if(!paths.has(p)){
+      const name = p.split(/[\\/]/).pop();
+      const dot = name.lastIndexOf('.');
+      items.push({
+        idx: items.length + 1,
+        path: p, name,
+        ext: dot > -1 ? name.slice(dot+1).toLowerCase() : '',
+        selected: false, enabled: false, fresh: false
+      });
+    }
+  });
+  snapshot = items.map(it => ({path: it.path, enabled: it.enabled}));
+  clearInterval(timer);
+  updateEditUI();
+  applyFilter();
+  toast(stored.length
+    ? `Modo edição — ${stored.length} desmarcado(s) da última vez trazidos de volta`
+    : 'Modo edição — clique nos quadradinhos e nas setas ▲▼');
+};
 
-$('btnSeqPlay').onclick = async ()=>{
-  if(!seq.length || !cfg.inputKey) return;
+$('btnCancel').onclick = ()=>{
+  editing = false;
+  snapshot = null;
+  updateEditUI();
+  setAuto();
+  loadList();
+};
+
+function toggleEnabled(it){
+  it.enabled = !it.enabled;
+  updateEditUI();
+  applyFilter();
+}
+
+function moveItem(it, dir){
+  const i = items.indexOf(it);
+  const j = dir === 'up' ? i - 1 : i + 1;
+  if(j < 0 || j >= items.length) return;
+  [items[i], items[j]] = [items[j], items[i]];
+  // reatribui índices visuais
+  items.forEach((x, k)=> x.idx = k + 1);
+  updateEditUI();
+  applyFilter();
+  // scroll pro item movido
+  setTimeout(()=>{
+    const el = document.querySelectorAll('.row')[items.indexOf(it)];
+    if(el) el.scrollIntoView({block:'nearest'});
+  }, 0);
+}
+
+$('btnApply').onclick = async ()=>{
+  const changes = countChanges();
+  if(changes === 0){
+    editing = false; snapshot = null; updateEditUI(); setAuto();
+    toast('Sem mudanças pra aplicar.');
+    return;
+  }
+  const kept = items.filter(it => it.enabled).length;
+  const removed = items.length - kept;
   const ok = confirm(
-    `▶ MONTAR SEQUÊNCIA (${seq.length} VTs)\n\n` +
-    `A lista será reescrita com os VTs marcados no INÍCIO, na ordem da marcação (1, 2, 3…), ` +
-    `com o VT 1 já selecionado e Auto Next ligado.\n` +
-    `Os demais vídeos continuam na lista, logo depois da sequência.\n\n` +
-    `NÃO use com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
+    `✔ APLICAR ALTERAÇÕES\n\n` +
+    `A lista do vMix será reescrita:\n` +
+    `  • ${kept} VT${kept!==1?'s':''} habilitado${kept!==1?'s':''} (na nova ordem)\n` +
+    `  • ${removed} desmarcado${removed!==1?'s':''} (removido${removed!==1?'s':''} da lista, ficam guardados no app)\n\n` +
+    `⚠ NÃO faça isso com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
   );
   if(!ok) return;
   try{
-    setStatus(true, 'montando sequência…');
-    const rest = items.filter(it => !seq.includes(it.path)).map(it => it.path);
-    const order = [...seq, ...rest];
+    setStatus(true, 'reescrevendo…');
     await fn('ListRemoveAll', {Input: cfg.inputKey});
-    for(const p of order){
-      await fn('ListAdd', {Input: cfg.inputKey, Value: p});
+    for(const it of items.filter(x => x.enabled)){
+      await fn('ListAdd', {Input: cfg.inputKey, Value: it.path});
     }
-    const f = flags(); f.an = true; save();
-    await fn('AutoPlayNextOn', {Input: cfg.inputKey});
-    await fn('SelectIndex', {Input: cfg.inputKey, Value: 1});
-    toast(`✔ Sequência montada: ${seq.length} VTs no início da lista, VT 1 selecionado`);
-    seq = [];
-    updateSeqUI();
-    updateCtrlUI();
+    // guarda os desmarcados por lista, pra poder re-marcar depois
+    cfg.disabled = cfg.disabled || {};
+    cfg.disabled[cfg.inputKey] = items.filter(x => !x.enabled).map(x => x.path);
+    save();
+    toast(`✔ Lista atualizada (${kept} VTs no ar, ${removed} desmarcados)`);
+    editing = false; snapshot = null;
+    updateEditUI();
+    setAuto();
     await loadList();
   }catch(e){
-    toast('Erro ao montar sequência: '+e.message+' — confira a lista no vMix!', true);
+    toast('Erro ao aplicar: '+e.message+' — confira a lista no vMix!', true);
   }
 };
 
@@ -739,9 +863,28 @@ document.addEventListener('keydown', e=>{
 
   if(['ArrowDown','ArrowUp','Enter'].includes(e.key)){
     if(!view.length) return;
-    if(e.key==='ArrowDown'){ e.preventDefault(); kbdPos = Math.min(kbdPos+1, view.length-1); }
-    if(e.key==='ArrowUp'){   e.preventDefault(); kbdPos = Math.max(kbdPos-1, 0); }
-    if(e.key==='Enter'){     e.preventDefault(); if(kbdPos>-1) selectItem(view[kbdPos]); return; }
+    const searching = terms().length > 0;
+    const matchIdxs = searching ? view.map((it,i)=> it.match ? i : -1).filter(i=>i>-1) : null;
+
+    if(e.key==='ArrowDown'){
+      e.preventDefault();
+      if(searching && matchIdxs.length){
+        const next = matchIdxs.find(i => i > kbdPos);
+        kbdPos = next !== undefined ? next : matchIdxs[0];   // wrap
+      }else{
+        kbdPos = Math.min(kbdPos+1, view.length-1);
+      }
+    }
+    if(e.key==='ArrowUp'){
+      e.preventDefault();
+      if(searching && matchIdxs.length){
+        const prev = [...matchIdxs].reverse().find(i => i < kbdPos);
+        kbdPos = prev !== undefined ? prev : matchIdxs[matchIdxs.length-1];
+      }else{
+        kbdPos = Math.max(kbdPos-1, 0);
+      }
+    }
+    if(e.key==='Enter'){ e.preventDefault(); if(kbdPos>-1) selectItem(view[kbdPos]); return; }
     render();
     const el = document.querySelectorAll('.row')[kbdPos];
     if(el) el.scrollIntoView({block:'nearest'});
@@ -756,6 +899,7 @@ function setAuto(){
   clearInterval(timer);
   if($('autoRef').checked){
     timer = setInterval(()=>{
+      if(editing) return;   // não sobrescreve edições pendentes
       if(document.activeElement !== $('search') || !$('search').value)
         loadList(true);
     }, 5000);
