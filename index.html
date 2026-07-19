@@ -536,6 +536,22 @@ async function loadList(silent=false){
         fresh : freshNames.has(name)
       };
     });
+
+    // mescla os desmarcados guardados localmente (que saíram da lista do vMix)
+    const stored = (cfg.disabled || {})[cfg.inputKey] || [];
+    const presentPaths = new Set(items.map(it => it.path));
+    stored.forEach(p=>{
+      if(!presentPaths.has(p)){
+        const name = p.split(/[\\/]/).pop();
+        const dot = name.lastIndexOf('.');
+        items.push({
+          idx: items.length + 1,
+          path: p, name,
+          ext: dot > -1 ? name.slice(dot+1).toLowerCase() : '',
+          selected: false, enabled: false, fresh: false
+        });
+      }
+    });
     applyFilter();
   }catch(e){
     setStatus(false, 'sem conexão');
@@ -621,6 +637,7 @@ function render(){
       <span class="ext ${it.ext}">${it.ext.toUpperCase()||'—'}</span>`;
     if(!editing){
       row.onclick = ()=> selectItem(it);
+      row.querySelector('.cb').onclick = (e)=>{ e.stopPropagation(); toggleEnabledLive(it); };
     }else{
       row.querySelector('.cb').onclick = (e)=>{ e.stopPropagation(); toggleEnabled(it); };
       row.querySelectorAll('.arrows button').forEach(b=>{
@@ -735,6 +752,42 @@ $('btnAutoFirst').onclick = async ()=>{
   updateCtrlUI();
 };
 
+/* ================= Toggle imediato do quadradinho (fora do modo edição) ================= */
+let applyTimer = null;   // enquanto != null, há reescrita agendada
+
+async function toggleEnabledLive(it){
+  if(playState === 'Running'){
+    toast('Não é possível marcar/desmarcar com a lista tocando — pause o vMix primeiro.', true);
+    return;
+  }
+  it.enabled = !it.enabled;
+  render();
+  clearTimeout(applyTimer);
+  setStatus(true, 'aplicando…');
+  applyTimer = setTimeout(applyEnabledChanges, 800);
+}
+
+async function applyEnabledChanges(){
+  applyTimer = null;
+  if(playState === 'Running'){
+    toast('Lista começou a tocar durante a edição — revertendo.', true);
+    await loadList();
+    return;
+  }
+  try{
+    cfg.disabled = cfg.disabled || {};
+    cfg.disabled[cfg.inputKey] = items.filter(x => !x.enabled).map(x => x.path);
+    save();
+    await fn('ListRemoveAll', {Input: cfg.inputKey});
+    for(const it of items.filter(x => x.enabled)){
+      await fn('ListAdd', {Input: cfg.inputKey, Value: it.path});
+    }
+    await loadList();
+  }catch(e){
+    toast('Erro ao aplicar: '+e.message, true);
+  }
+}
+
 /* ================= Modo Edição (marcar/desmarcar + reordenar) ================= */
 let editing = false;
 let snapshot = null;      // cópia dos items pra permitir cancelar
@@ -762,28 +815,11 @@ function countChanges(){
 $('btnEdit').onclick = ()=>{
   if(!items.length){ toast('Carregue uma lista primeiro.', true); return; }
   editing = true;
-  // traz de volta os desmarcados guardados anteriormente pra poder re-habilitar
-  const stored = (cfg.disabled || {})[cfg.inputKey] || [];
-  const paths = new Set(items.map(it => it.path));
-  stored.forEach(p=>{
-    if(!paths.has(p)){
-      const name = p.split(/[\\/]/).pop();
-      const dot = name.lastIndexOf('.');
-      items.push({
-        idx: items.length + 1,
-        path: p, name,
-        ext: dot > -1 ? name.slice(dot+1).toLowerCase() : '',
-        selected: false, enabled: false, fresh: false
-      });
-    }
-  });
   snapshot = items.map(it => ({path: it.path, enabled: it.enabled}));
   clearInterval(timer);
   updateEditUI();
   applyFilter();
-  toast(stored.length
-    ? `Modo edição — ${stored.length} desmarcado(s) da última vez trazidos de volta`
-    : 'Modo edição — clique nos quadradinhos e nas setas ▲▼');
+  toast('Modo edição — use as setas ▲▼ para reordenar');
 };
 
 $('btnCancel').onclick = ()=>{
@@ -899,7 +935,7 @@ function setAuto(){
   clearInterval(timer);
   if($('autoRef').checked){
     timer = setInterval(()=>{
-      if(editing) return;   // não sobrescreve edições pendentes
+      if(editing || applyTimer) return;   // não sobrescreve edições pendentes
       if(document.activeElement !== $('search') || !$('search').value)
         loadList(true);
     }, 5000);
