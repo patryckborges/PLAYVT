@@ -193,6 +193,27 @@
   }
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   #toast.err{border-color:var(--red)}
+
+  /* ---------- Modal IPs ---------- */
+  #ipMask{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;
+    align-items:center;justify-content:center;
+  }
+  #ipMask.open{display:flex}
+  #ipBox{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:18px 20px;min-width:420px;max-width:90vw;
+  }
+  #ipBox h3{font-size:13px;letter-spacing:.14em;color:var(--amber);margin-bottom:14px}
+  #ipBox .ipRow{display:flex;gap:8px;margin-bottom:6px;align-items:center}
+  #ipBox .ipRow input{padding:6px 9px;font-family:var(--mono);font-size:12px}
+  #ipBox .ipRow .name{width:80px}
+  #ipBox .ipRow .ip{flex:1}
+  #ipBox .ipRow button{background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px;padding:2px 8px}
+  #ipBox .ipRow button:hover{background:#2a1515;border-radius:4px}
+  #ipBox .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+  #ipBox .foot .left{margin-right:auto}
+  #ipBox button.primary{border-color:var(--green);color:var(--green)}
 </style>
 </head>
 <body>
@@ -206,6 +227,7 @@
   <button id="btnRefresh" title="Recarregar lista">⟳ Atualizar</button>
   <button id="btnReorder" class="warn" title="Reescreve a lista no vMix na ordem atual da tela">⚠ Reordenar no vMix</button>
   <button id="btnAI" title="Copiar automaticamente vídeos da produção para o disco local e adicionar na lista">📥 Auto-Import</button>
+  <button id="btnIPs" title="Editar nomes e IPs das máquinas">⚙ IPs</button>
   <span id="status"><span id="dot" class="dot"></span><span id="statusTxt">desconectado</span></span>
 </header>
 
@@ -272,11 +294,24 @@
   <label class="chk"><input type="checkbox" id="autoRef" checked> auto-atualizar (5s)</label>
 </footer>
 
+<div id="ipMask">
+  <div id="ipBox">
+    <h3>MÁQUINAS (nome · IP)</h3>
+    <div id="ipList"></div>
+    <div class="foot">
+      <button id="ipAdd" class="left">+ Adicionar máquina</button>
+      <button id="ipReset">Restaurar padrão</button>
+      <button id="ipCancel">Cancelar</button>
+      <button id="ipSave" class="primary">Salvar</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
 /* ================= CONFIG ================= */
-const PCS = {
+const DEFAULT_PCS = {
   'PD2':'10.10.0.102','PD3':'10.10.0.103','PD4':'10.10.0.104',
   'PD5':'10.10.0.105','PD6':'10.10.0.106'
 };
@@ -284,6 +319,7 @@ const LS_KEY = 'vtfinder_cfg';
 const VIDEO_EXT = ['mp4','mov','mxf','avi','wmv','mpg','mpeg','ts','mkv'];
 
 let cfg = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+let PCS = cfg.pcs && Object.keys(cfg.pcs).length ? cfg.pcs : {...DEFAULT_PCS};
 let items = [];
 let view  = [];
 let kbdPos = -1;
@@ -291,20 +327,91 @@ let timer = null;
 let freshNames = new Set();   // marca "NOVO" nos itens recém-importados
 
 const $ = id => document.getElementById(id);
-const base = () => `http://${PCS[cfg.pc]}:8088/api/`;
+const base = () => {
+  const ip = PCS[cfg.pc] || '';
+  return `http://${ip.includes(':') ? ip : ip + ':8088'}/api/`;
+};
 
 /* ================= UI: seletor de PC ================= */
-(function initPC(){
+function rebuildPcSel(){
   const sel = $('pcSel');
+  sel.innerHTML = '';
   for(const k of Object.keys(PCS)){
     const o = document.createElement('option');
     o.value = k; o.textContent = `${k} · ${PCS[k]}`;
     sel.appendChild(o);
   }
-  cfg.pc = cfg.pc && PCS[cfg.pc] ? cfg.pc : 'PD2';
+  if(!(cfg.pc in PCS)) cfg.pc = Object.keys(PCS)[0];
   sel.value = cfg.pc;
-  sel.onchange = () => { cfg.pc = sel.value; save(); loadInputs(); };
-})();
+}
+rebuildPcSel();
+$('pcSel').onchange = () => { cfg.pc = $('pcSel').value; save(); loadInputs(); };
+
+/* ================= Modal: editar IPs ================= */
+function renderIpList(current){
+  const box = $('ipList');
+  box.innerHTML = '';
+  Object.entries(current).forEach(([name, ip], i)=>{
+    const row = document.createElement('div');
+    row.className = 'ipRow';
+    row.innerHTML = `
+      <input class="name" type="text" value="${escapeHTML(name)}" placeholder="nome (PD2)" spellcheck="false">
+      <input class="ip"   type="text" value="${escapeHTML(ip)}"   placeholder="10.10.0.102:8088" spellcheck="false">
+      <button title="Remover">✕</button>`;
+    row.querySelector('button').onclick = ()=> row.remove();
+    box.appendChild(row);
+  });
+}
+
+function collectIpList(){
+  const out = {};
+  $('ipList').querySelectorAll('.ipRow').forEach(row=>{
+    const name = row.querySelector('.name').value.trim();
+    const ip   = row.querySelector('.ip').value.trim();
+    if(name && ip) out[name] = ip;
+  });
+  return out;
+}
+
+$('btnIPs').onclick = ()=>{
+  renderIpList(PCS);
+  $('ipMask').classList.add('open');
+};
+$('ipCancel').onclick = ()=> $('ipMask').classList.remove('open');
+$('ipMask').onclick = (e)=>{ if(e.target === $('ipMask')) $('ipMask').classList.remove('open'); };
+
+$('ipAdd').onclick = ()=>{
+  const box = $('ipList');
+  const row = document.createElement('div');
+  row.className = 'ipRow';
+  row.innerHTML = `
+    <input class="name" type="text" placeholder="nome (PD7)" spellcheck="false">
+    <input class="ip"   type="text" placeholder="10.10.0.107" spellcheck="false">
+    <button title="Remover">✕</button>`;
+  row.querySelector('button').onclick = ()=> row.remove();
+  box.appendChild(row);
+  row.querySelector('.name').focus();
+};
+
+$('ipReset').onclick = ()=>{
+  if(confirm('Restaurar a lista padrão (PD2–PD6)? Suas alterações serão perdidas.'))
+    renderIpList(DEFAULT_PCS);
+};
+
+$('ipSave').onclick = ()=>{
+  const novo = collectIpList();
+  if(!Object.keys(novo).length){ toast('Adicione ao menos uma máquina.', true); return; }
+  // detecta duplicidade de nomes (o objeto já deduplica, mas avisa se colapsou)
+  const nomes = [...$('ipList').querySelectorAll('.name')].map(i=>i.value.trim()).filter(Boolean);
+  if(new Set(nomes).size !== nomes.length){ toast('Nomes de máquina duplicados — cada nome precisa ser único.', true); return; }
+  PCS = novo;
+  cfg.pcs = novo;
+  save();
+  rebuildPcSel();
+  $('ipMask').classList.remove('open');
+  toast('Máquinas atualizadas ✓');
+  loadInputs();
+};
 
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(cfg)); }
 
@@ -363,7 +470,7 @@ async function loadInputs(){
   }catch(e){
     setStatus(false, 'sem conexão');
     sel.innerHTML = '<option value="">— erro —</option>';
-    renderEmpty(`Não foi possível ler o vMix em <b>${PCS[cfg.pc]}:8088</b>.<br>
+    renderEmpty(`Não foi possível ler o vMix em <b>${base().replace('/api/','')}</b>.<br>
       Verifique se o Web Controller está ativo (Settings → Web Controller).<br>
       Se o app estiver aberto por HTTPS, libere "Conteúdo não seguro"<br>
       nas configurações do site no Chrome (cadeado → Configurações do site).`);
