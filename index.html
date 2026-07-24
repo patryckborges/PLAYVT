@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>VT Finder — vMix List</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root{
     --bg:#101418;
@@ -168,24 +169,73 @@
   }
   .row .cb:hover{border-color:var(--amber)}
 
-  .row .arrows{display:none;flex-direction:column;gap:1px;flex:0 0 auto}
-  .row .arrows button{
-    background:var(--panel2);border:1px solid var(--line);color:var(--dim);
-    width:22px;height:11px;padding:0;font-size:8px;line-height:1;cursor:pointer;
-    border-radius:2px;
-  }
-  .row .arrows button:hover{border-color:var(--amber);color:var(--amber)}
-  body.editing .row .arrows{display:flex}
-  body.editing .row{cursor:default}
-  body.editing .row .name{cursor:default}
-  body.editing #ctrlBar #btnEdit{background:#2a2015;border-color:var(--amber);color:var(--amber)}
   .row.hidden-item{opacity:.45}
   .row.hidden-item .name{text-decoration:line-through;color:var(--dim)}
 
-  .pending-badge{
-    background:var(--amber);color:#000;font-weight:800;font-size:10px;letter-spacing:.08em;
-    padding:2px 7px;border-radius:3px;margin-left:6px;
+  /* ---------- Badge R1, R2 do roteiro ---------- */
+  .row .r-badge{
+    background:var(--amber);color:#000;font-weight:800;font-size:10px;
+    padding:2px 6px;border-radius:3px;font-family:var(--mono);letter-spacing:.05em;
+    flex:0 0 auto;
   }
+
+  /* ---------- Separador de seção na lista ---------- */
+  .sep-row{
+    padding:6px 12px;background:#0c1014;
+    font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--dim);
+    font-family:var(--mono);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  }
+  .sep-row.roteiro{color:var(--amber);background:#1a1408}
+
+  /* ---------- Modal de preview do Roteiro ---------- */
+  #rotMask{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;
+    align-items:center;justify-content:center;
+  }
+  #rotMask.open{display:flex}
+  #rotBox{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    width:min(900px,92vw);max-height:88vh;display:flex;flex-direction:column;
+  }
+  #rotBox h3{
+    font-size:13px;letter-spacing:.14em;color:var(--amber);
+    padding:14px 20px;border-bottom:1px solid var(--line);
+  }
+  #rotBox .rot-sub{color:var(--dim);font-size:11px;font-weight:400;letter-spacing:.02em;margin-top:4px}
+  #rotList{overflow-y:auto;flex:1;padding:8px 4px}
+  .rot-row{
+    display:flex;gap:10px;padding:8px 16px;align-items:center;
+    border-bottom:1px solid #141a20;
+  }
+  .rot-row .rot-n{
+    background:var(--amber);color:#000;font-weight:800;font-size:11px;
+    padding:2px 7px;border-radius:3px;font-family:var(--mono);min-width:34px;text-align:center;
+  }
+  .rot-row .rot-label{
+    flex:1;font-family:var(--mono);font-size:12.5px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;
+  }
+  .rot-row .rot-arrow{color:var(--dim);font-family:var(--mono);font-size:14px}
+  .rot-row select{
+    flex:1;font-family:var(--mono);font-size:11.5px;padding:5px 8px;min-width:0;
+  }
+  .rot-row.ok select{border-color:var(--green)}
+  .rot-row.weak select{border-color:var(--amber)}
+  .rot-row.miss select{border-color:var(--red)}
+  .rot-row .rot-conf{
+    font-family:var(--mono);font-size:10px;color:var(--dim);
+    min-width:52px;text-align:right;
+  }
+  .rot-row.ok .rot-conf{color:var(--green)}
+  .rot-row.weak .rot-conf{color:var(--amber)}
+  .rot-row.miss .rot-conf{color:var(--red)}
+  #rotBox .foot{
+    display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;
+    border-top:1px solid var(--line);align-items:center;
+  }
+  #rotBox .foot .info{margin-right:auto;font-size:11px;color:var(--dim);font-family:var(--mono)}
+  #rotBox button.primary{border-color:var(--green);color:var(--green)}
+  #rotBox button.primary:hover{background:#0e2418}
 
   /* ---------- Barra de controle da lista (estilo vMix) ---------- */
   #ctrlBar{
@@ -199,6 +249,89 @@
     letter-spacing:.08em;color:var(--dim);
   }
   #ctrlBar .vbtn.on{color:var(--green);border-color:var(--green);background:#0e2418}
+
+  /* ---------- Outbox de novos arquivos (topo da lista) ---------- */
+  #outbox{background:#1a1408;border-bottom:2px solid var(--amber);display:none}
+  #outbox.open{display:block}
+  #outbox .ob-head{
+    display:flex;align-items:center;gap:10px;padding:8px 12px;
+    background:#231a0a;font-size:10.5px;font-weight:800;letter-spacing:.16em;
+    color:var(--amber);font-family:var(--mono);
+  }
+  #outbox .ob-head .spacer{flex:1}
+  #outbox button{
+    background:var(--panel2);border:1px solid var(--amber);color:var(--amber);
+    border-radius:4px;padding:4px 10px;font-size:11px;font-weight:700;font-family:inherit;
+    cursor:pointer;
+  }
+  #outbox button:hover{background:#2a2015}
+  #outbox .ob-row{
+    display:flex;align-items:center;gap:10px;padding:6px 12px 6px 20px;
+    border-top:1px solid #2a2015;
+  }
+  #outbox .ob-name{
+    flex:1;font-family:var(--mono);font-size:12.5px;color:var(--txt);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  #outbox .ob-src{
+    font-family:var(--mono);font-size:10px;color:var(--dim);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:35%;
+  }
+  #outbox .ob-dismiss{
+    background:transparent;border:none;color:var(--dim);cursor:pointer;
+    font-size:14px;padding:2px 6px;
+  }
+  #outbox .ob-dismiss:hover{color:var(--red)}
+
+  /* ---------- Modal do Roteiro ---------- */
+  #rotMask{
+    display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;
+    align-items:center;justify-content:center;
+  }
+  #rotMask.open{display:flex}
+  #rotBox{
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    width:min(900px,92vw);max-height:88vh;display:flex;flex-direction:column;
+  }
+  #rotBox h3{
+    font-size:13px;letter-spacing:.14em;color:var(--amber);
+    padding:14px 20px;border-bottom:1px solid var(--line);
+  }
+  #rotBox .rot-sub{color:var(--dim);font-size:11px;font-weight:400;letter-spacing:.02em;margin-top:4px}
+  #rotList{overflow-y:auto;flex:1;padding:4px 0}
+  .rot-row{
+    display:flex;gap:10px;padding:6px 16px;align-items:center;
+    border-bottom:1px solid #141a20;
+  }
+  .rot-row .rot-n{
+    background:var(--amber);color:#000;font-weight:800;font-size:11px;
+    padding:2px 7px;border-radius:3px;font-family:var(--mono);min-width:30px;text-align:center;
+  }
+  .rot-row .rot-label{
+    flex:1;font-family:var(--mono);font-size:12px;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;color:var(--txt);
+  }
+  .rot-row .rot-arrow{color:var(--dim);font-family:var(--mono);font-size:13px}
+  .rot-row select{
+    flex:2;font-family:var(--mono);font-size:11.5px;padding:5px 8px;min-width:0;
+  }
+  .rot-row.ok select{border-color:var(--green)}
+  .rot-row.weak select{border-color:var(--amber)}
+  .rot-row.miss select{border-color:var(--red)}
+  .rot-row .rot-conf{
+    font-family:var(--mono);font-size:10px;color:var(--dim);
+    min-width:60px;text-align:right;
+  }
+  .rot-row.ok .rot-conf{color:var(--green)}
+  .rot-row.weak .rot-conf{color:var(--amber)}
+  .rot-row.miss .rot-conf{color:var(--red)}
+  #rotBox .foot{
+    display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;
+    border-top:1px solid var(--line);align-items:center;
+  }
+  #rotBox .foot .info{margin-right:auto;font-size:11px;color:var(--dim);font-family:var(--mono)}
+  #rotBox button.primary{border-color:var(--green);color:var(--green)}
+  #rotBox button.primary:hover{background:#0e2418}
 
   /* ---------- Rodapé ---------- */
   footer{
@@ -251,8 +384,8 @@
     <option value="">— carregar inputs —</option>
   </select>
   <button id="btnRefresh" title="Recarregar lista">⟳ Atualizar</button>
-  <button id="btnReorder" class="warn" title="Reescreve a lista no vMix na ordem atual da tela">⚠ Reordenar no vMix</button>
   <button id="btnAI" title="Copiar automaticamente vídeos da produção para o disco local e adicionar na lista">📥 Auto-Import</button>
+  <button id="btnRoteiro" title="Importar PDF do roteiro e ordenar os VTs pela ordem do programa">📄 Roteiro</button>
   <button id="btnIPs" title="Editar nomes e IPs das máquinas">⚙ IPs</button>
   <span id="status"><span id="dot" class="dot"></span><span id="statusTxt">desconectado</span></span>
 </header>
@@ -289,6 +422,7 @@
   <input id="search" type="text" placeholder="Digite para buscar o VT…  (ex: gol, entrevista, vinheta)" autocomplete="off" spellcheck="false">
   <select id="sortSel" title="Ordenação (apenas visual)">
     <option value="vmix">Ordem do vMix</option>
+    <option value="roteiro">Ordem do Roteiro</option>
     <option value="az">Nome A→Z</option>
     <option value="za">Nome Z→A</option>
     <option value="ext">Tipo de arquivo</option>
@@ -296,7 +430,31 @@
   <span class="hint"><kbd>/</kbd> busca &nbsp;<kbd>↑↓</kbd> navega &nbsp;<kbd>Enter</kbd> seleciona</span>
 </div>
 
+<div id="outbox">
+  <div class="ob-head">
+    <span id="obTitle">CAIXA DE ENTRADA</span>
+    <span class="spacer"></span>
+    <button id="obImportAll">Importar todos</button>
+    <button id="obDismissAll" style="border-color:var(--dim);color:var(--dim)">Descartar todos</button>
+  </div>
+  <div id="obList"></div>
+</div>
+
 <div id="listWrap"></div>
+
+<div id="rotMask">
+  <div id="rotBox">
+    <h3>IMPORTAR ROTEIRO
+      <div class="rot-sub" id="rotSub">Confira e ajuste os matches antes de aplicar</div>
+    </h3>
+    <div id="rotList"></div>
+    <div class="foot">
+      <span class="info" id="rotInfo"></span>
+      <button id="rotCancel">Cancelar</button>
+      <button id="rotApply" class="primary">Aplicar ordem do roteiro</button>
+    </div>
+  </div>
+</div>
 
 <div id="ctrlBar">
   <button id="btnRestart" title="Reiniciar item atual">⏮</button>
@@ -307,11 +465,6 @@
   <button id="btnAutoNext" class="vbtn" title="Reproduzir automaticamente o próximo item da lista">AUTO NEXT</button>
   <button id="btnAutoFirst" class="vbtn" title="Sempre voltar ao primeiro item ao transicionar pro output">AUTO FIRST</button>
   <button id="btnLoop" class="vbtn" title="Recomeçar a lista quando chegar ao fim">LOOP</button>
-  <span class="sep"></span>
-  <button id="btnEdit" class="vbtn" title="Modo edição: marcar/desmarcar e reordenar">✎ EDITAR</button>
-  <button id="btnApply" class="vbtn" style="display:none;color:var(--green);border-color:var(--green)" title="Aplicar as alterações à lista do vMix">✔ APLICAR</button>
-  <button id="btnCancel" class="vbtn" style="display:none;color:var(--red);border-color:var(--red)" title="Descartar alterações">✕ CANCELAR</button>
-  <span id="pendingBadge" style="display:none" class="pending-badge">0 mudanças</span>
 </div>
 
 <footer>
@@ -494,6 +647,7 @@ async function loadInputs(){
       sel.value = cfg.inputKey;
     cfg.inputKey = sel.value; save();
     await loadList();
+    loadOutbox();
   }catch(e){
     setStatus(false, 'sem conexão');
     sel.innerHTML = '<option value="">— erro —</option>';
@@ -505,7 +659,7 @@ async function loadInputs(){
 }
 
 $('inputSel').onchange = () => {
-  cfg.inputKey = $('inputSel').value; save(); loadList();
+  cfg.inputKey = $('inputSel').value; save(); loadList(); loadOutbox();
 };
 
 async function loadList(silent=false){
@@ -535,22 +689,6 @@ async function loadList(silent=false){
         enabled  : n.getAttribute('enabled') !== 'false',
         fresh : freshNames.has(name)
       };
-    });
-
-    // mescla os desmarcados guardados localmente (que saíram da lista do vMix)
-    const stored = (cfg.disabled || {})[cfg.inputKey] || [];
-    const presentPaths = new Set(items.map(it => it.path));
-    stored.forEach(p=>{
-      if(!presentPaths.has(p)){
-        const name = p.split(/[\\/]/).pop();
-        const dot = name.lastIndexOf('.');
-        items.push({
-          idx: items.length + 1,
-          path: p, name,
-          ext: dot > -1 ? name.slice(dot+1).toLowerCase() : '',
-          selected: false, enabled: false, fresh: false
-        });
-      }
     });
     applyFilter();
   }catch(e){
@@ -625,25 +763,12 @@ function render(){
       + (vi === kbdPos ? ' kbd-focus' : '')
       + (!it.enabled ? ' hidden-item' : '');
     row.innerHTML = `
-      <span class="cb${it.enabled ? ' on' : ''}"
-            title="${editing ? 'Marcar/desmarcar (aplicará na lista do vMix)' : 'Estado atual: ' + (it.enabled ? 'marcado' : 'desmarcado — pulado pelo Auto Next')}"></span>
-      <span class="arrows">
-        <button data-dir="up"   title="Mover para cima">▲</button>
-        <button data-dir="down" title="Mover para baixo">▼</button>
-      </span>
+      <span class="cb${it.enabled ? ' on' : ''}" title="Estado no vMix: ${it.enabled ? 'marcado' : 'desmarcado'}"></span>
       <span class="idx">${String(it.idx).padStart(3,'0')}</span>
       <span class="name" title="${escapeHTML(it.path)}">${highlight(it.name, t)}</span>
       ${it.selected ? '<span class="tag-sel">NO AR</span>' : ''}
       <span class="ext ${it.ext}">${it.ext.toUpperCase()||'—'}</span>`;
-    if(!editing){
-      row.onclick = ()=> selectItem(it);
-      row.querySelector('.cb').onclick = (e)=>{ e.stopPropagation(); toggleEnabledLive(it); };
-    }else{
-      row.querySelector('.cb').onclick = (e)=>{ e.stopPropagation(); toggleEnabled(it); };
-      row.querySelectorAll('.arrows button').forEach(b=>{
-        b.onclick = (e)=>{ e.stopPropagation(); moveItem(it, b.dataset.dir); };
-      });
-    }
+    row.onclick = ()=> selectItem(it);
     frag.appendChild(row);
   });
   wrap.appendChild(frag);
@@ -668,34 +793,6 @@ async function selectItem(it){
     toast('Falha ao selecionar: '+e.message, true);
   }
 }
-
-$('btnReorder').onclick = async ()=>{
-  if(!cfg.inputKey || !items.length) return;
-  if($('search').value.trim()){
-    toast('Limpe a busca antes de reordenar — a reescrita usa a lista completa.', true);
-    return;
-  }
-  const mode = $('sortSel').options[$('sortSel').selectedIndex].text;
-  const ok = confirm(
-    `⚠ REORDENAR A LISTA NO vMIX\n\n` +
-    `A lista será APAGADA e reescrita na ordem: "${mode}" (${items.length} itens).\n` +
-    `NÃO faça isso com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
-  );
-  if(!ok) return;
-
-  const ordered = [...view];
-  try{
-    setStatus(true, 'reescrevendo…');
-    await fn('ListRemoveAll', {Input: cfg.inputKey});
-    for(const it of ordered){
-      await fn('ListAdd', {Input: cfg.inputKey, Value: it.path});
-    }
-    toast(`✔ Lista reescrita no vMix (${ordered.length} itens)`);
-    await loadList();
-  }catch(e){
-    toast('Erro ao reordenar: '+e.message+' — confira a lista no vMix!', true);
-  }
-};
 
 $('btnRefresh').onclick = ()=> loadList();
 
@@ -752,143 +849,6 @@ $('btnAutoFirst').onclick = async ()=>{
   updateCtrlUI();
 };
 
-/* ================= Toggle imediato do quadradinho (fora do modo edição) ================= */
-let applyTimer = null;   // enquanto != null, há reescrita agendada
-
-async function toggleEnabledLive(it){
-  if(playState === 'Running'){
-    toast('Não é possível marcar/desmarcar com a lista tocando — pause o vMix primeiro.', true);
-    return;
-  }
-  it.enabled = !it.enabled;
-  render();
-  clearTimeout(applyTimer);
-  setStatus(true, 'aplicando…');
-  applyTimer = setTimeout(applyEnabledChanges, 800);
-}
-
-async function applyEnabledChanges(){
-  applyTimer = null;
-  if(playState === 'Running'){
-    toast('Lista começou a tocar durante a edição — revertendo.', true);
-    await loadList();
-    return;
-  }
-  try{
-    cfg.disabled = cfg.disabled || {};
-    cfg.disabled[cfg.inputKey] = items.filter(x => !x.enabled).map(x => x.path);
-    save();
-    await fn('ListRemoveAll', {Input: cfg.inputKey});
-    for(const it of items.filter(x => x.enabled)){
-      await fn('ListAdd', {Input: cfg.inputKey, Value: it.path});
-    }
-    await loadList();
-  }catch(e){
-    toast('Erro ao aplicar: '+e.message, true);
-  }
-}
-
-/* ================= Modo Edição (marcar/desmarcar + reordenar) ================= */
-let editing = false;
-let snapshot = null;      // cópia dos items pra permitir cancelar
-
-function updateEditUI(){
-  document.body.classList.toggle('editing', editing);
-  $('btnEdit').style.display = editing ? 'none' : '';
-  $('btnApply').style.display = editing ? '' : 'none';
-  $('btnCancel').style.display = editing ? '' : 'none';
-  const changes = editing ? countChanges() : 0;
-  $('pendingBadge').style.display = editing ? '' : 'none';
-  $('pendingBadge').textContent = changes === 0 ? 'sem mudanças' : `${changes} mudança${changes>1?'s':''}`;
-}
-
-function countChanges(){
-  if(!snapshot) return 0;
-  let n = 0;
-  for(let i=0;i<items.length;i++){
-    if(!snapshot[i] || snapshot[i].path !== items[i].path) n++;   // reordenado
-    else if(snapshot[i].enabled !== items[i].enabled) n++;        // marcado/desmarcado
-  }
-  return n;
-}
-
-$('btnEdit').onclick = ()=>{
-  if(!items.length){ toast('Carregue uma lista primeiro.', true); return; }
-  editing = true;
-  snapshot = items.map(it => ({path: it.path, enabled: it.enabled}));
-  clearInterval(timer);
-  updateEditUI();
-  applyFilter();
-  toast('Modo edição — use as setas ▲▼ para reordenar');
-};
-
-$('btnCancel').onclick = ()=>{
-  editing = false;
-  snapshot = null;
-  updateEditUI();
-  setAuto();
-  loadList();
-};
-
-function toggleEnabled(it){
-  it.enabled = !it.enabled;
-  updateEditUI();
-  applyFilter();
-}
-
-function moveItem(it, dir){
-  const i = items.indexOf(it);
-  const j = dir === 'up' ? i - 1 : i + 1;
-  if(j < 0 || j >= items.length) return;
-  [items[i], items[j]] = [items[j], items[i]];
-  // reatribui índices visuais
-  items.forEach((x, k)=> x.idx = k + 1);
-  updateEditUI();
-  applyFilter();
-  // scroll pro item movido
-  setTimeout(()=>{
-    const el = document.querySelectorAll('.row')[items.indexOf(it)];
-    if(el) el.scrollIntoView({block:'nearest'});
-  }, 0);
-}
-
-$('btnApply').onclick = async ()=>{
-  const changes = countChanges();
-  if(changes === 0){
-    editing = false; snapshot = null; updateEditUI(); setAuto();
-    toast('Sem mudanças pra aplicar.');
-    return;
-  }
-  const kept = items.filter(it => it.enabled).length;
-  const removed = items.length - kept;
-  const ok = confirm(
-    `✔ APLICAR ALTERAÇÕES\n\n` +
-    `A lista do vMix será reescrita:\n` +
-    `  • ${kept} VT${kept!==1?'s':''} habilitado${kept!==1?'s':''} (na nova ordem)\n` +
-    `  • ${removed} desmarcado${removed!==1?'s':''} (removido${removed!==1?'s':''} da lista, ficam guardados no app)\n\n` +
-    `⚠ NÃO faça isso com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
-  );
-  if(!ok) return;
-  try{
-    setStatus(true, 'reescrevendo…');
-    await fn('ListRemoveAll', {Input: cfg.inputKey});
-    for(const it of items.filter(x => x.enabled)){
-      await fn('ListAdd', {Input: cfg.inputKey, Value: it.path});
-    }
-    // guarda os desmarcados por lista, pra poder re-marcar depois
-    cfg.disabled = cfg.disabled || {};
-    cfg.disabled[cfg.inputKey] = items.filter(x => !x.enabled).map(x => x.path);
-    save();
-    toast(`✔ Lista atualizada (${kept} VTs no ar, ${removed} desmarcados)`);
-    editing = false; snapshot = null;
-    updateEditUI();
-    setAuto();
-    await loadList();
-  }catch(e){
-    toast('Erro ao aplicar: '+e.message+' — confira a lista no vMix!', true);
-  }
-};
-
 /* ================= Teclado ================= */
 document.addEventListener('keydown', e=>{
   const inField = ['INPUT','SELECT'].includes(document.activeElement.tagName);
@@ -935,7 +895,6 @@ function setAuto(){
   clearInterval(timer);
   if($('autoRef').checked){
     timer = setInterval(()=>{
-      if(editing || applyTimer) return;   // não sobrescreve edições pendentes
       if(document.activeElement !== $('search') || !$('search').value)
         loadList(true);
     }, 5000);
@@ -1112,11 +1071,11 @@ async function scan(baseline=false){
   scanning = false;
 }
 
-/* ---- copia 1 arquivo e adiciona no vMix ---- */
+/* ---- copia 1 arquivo e coloca na caixa de entrada (outbox) ---- */
 async function importFile(srcFileHandle, file){
   const name = srcFileHandle.name;
+  const srcRel = (await srcHandle.resolve(srcFileHandle) || []).join('/');
   try{
-    // colisão de nome no destino?
     let finalName = name;
     try{
       const existing = await destHandle.getFileHandle(name);
@@ -1139,30 +1098,117 @@ async function importFile(srcFileHandle, file){
     aiLog(`Copiando ${name} (${(file.size/1048576).toFixed(0)} MB)…`, 'info');
     const dest = await destHandle.getFileHandle(finalName, {create:true});
     const writable = await dest.createWritable();
-    await file.stream().pipeTo(writable);   // pipeTo fecha o writable
+    await file.stream().pipeTo(writable);
     aiLog(`✔ Copiado: ${finalName}`, 'ok');
 
-    // adiciona no vMix com o caminho REAL do disco
     if(!cfg.destPath){
-      aiLog('Caminho real do destino não preenchido — arquivo copiado, mas NÃO adicionado ao vMix.', 'err');
-      return true;
-    }
-    if(!cfg.inputKey){
-      aiLog('Nenhum input List selecionado no topo — arquivo copiado, mas NÃO adicionado ao vMix.', 'err');
+      aiLog('Caminho real do destino não preenchido — o arquivo foi copiado mas NÃO poderá ir pro vMix.', 'err');
       return true;
     }
     const fullPath = cfg.destPath + '\\' + finalName;
-    await fn('ListAdd', {Input: cfg.inputKey, Value: fullPath});
-    aiLog(`✔ Adicionado na lista do vMix: ${fullPath}`, 'ok');
-    freshNames.add(finalName);
-    toast(`📥 Novo VT na lista: ${finalName}`);
-    loadList(true);
+    addToOutbox({name: finalName, path: fullPath, src: srcRel});
+    aiLog(`📥 ${finalName} disponível na caixa de entrada — aguardando operador importar.`, 'info');
     return true;
   }catch(e){
     aiLog(`ERRO ao importar ${name}: ${e.message}`, 'err');
     return false;
   }
 }
+
+/* ================= Caixa de entrada (outbox) ================= */
+let outbox = [];   // [{name, path, src}]
+
+function loadOutbox(){
+  outbox = (cfg.outbox || {})[cfg.inputKey] || [];
+  renderOutbox();
+}
+
+function saveOutbox(){
+  cfg.outbox = cfg.outbox || {};
+  cfg.outbox[cfg.inputKey] = outbox;
+  save();
+}
+
+function addToOutbox(entry){
+  // evita duplicar (mesmo caminho já pendente ou já na lista do vMix)
+  if(outbox.some(x => x.path === entry.path)) return;
+  if(items.some(it => it.path === entry.path)) return;
+  outbox.push(entry);
+  saveOutbox();
+  renderOutbox();
+  toast(`📥 Novo arquivo na caixa: ${entry.name}`);
+}
+
+function renderOutbox(){
+  const box = $('outbox');
+  if(!outbox.length){ box.classList.remove('open'); return; }
+  box.classList.add('open');
+  $('obTitle').textContent = `📥 CAIXA DE ENTRADA · ${outbox.length} ARQUIVO${outbox.length>1?'S':''} NOV${outbox.length>1?'OS':'O'}`;
+  const list = $('obList');
+  list.innerHTML = '';
+  outbox.forEach((entry, i)=>{
+    const row = document.createElement('div');
+    row.className = 'ob-row';
+    row.innerHTML = `
+      <span class="ob-name" title="${escapeHTML(entry.path)}">${escapeHTML(entry.name)}</span>
+      <span class="ob-src" title="${escapeHTML(entry.src||'')}">${escapeHTML(entry.src || '')}</span>
+      <button title="Adicionar este VT na lista do vMix">Importar</button>
+      <button class="ob-dismiss" title="Descartar (não importa)">✕</button>`;
+    row.querySelectorAll('button')[0].onclick = ()=> importOne(i);
+    row.querySelector('.ob-dismiss').onclick = ()=> dismissOne(i);
+    list.appendChild(row);
+  });
+}
+
+async function importOne(i){
+  const entry = outbox[i];
+  if(!cfg.inputKey){ toast('Selecione um input List primeiro.', true); return; }
+  try{
+    await fn('ListAdd', {Input: cfg.inputKey, Value: entry.path});
+    freshNames.add(entry.name);
+    outbox.splice(i, 1);
+    saveOutbox();
+    renderOutbox();
+    toast(`✔ ${entry.name} adicionado à lista`);
+    await loadList(true);
+  }catch(e){
+    toast(`Erro: ${e.message}`, true);
+  }
+}
+
+function dismissOne(i){
+  const entry = outbox[i];
+  if(!confirm(`Descartar "${entry.name}" da caixa de entrada? (o arquivo continua no disco, só não vai pra lista)`)) return;
+  outbox.splice(i, 1);
+  saveOutbox();
+  renderOutbox();
+}
+
+$('obImportAll').onclick = async ()=>{
+  if(!outbox.length) return;
+  if(!cfg.inputKey){ toast('Selecione um input List primeiro.', true); return; }
+  if(!confirm(`Importar todos os ${outbox.length} arquivos pra lista do vMix?`)) return;
+  const copy = [...outbox];
+  try{
+    for(const entry of copy){
+      await fn('ListAdd', {Input: cfg.inputKey, Value: entry.path});
+      freshNames.add(entry.name);
+    }
+    outbox = [];
+    saveOutbox();
+    renderOutbox();
+    toast(`✔ ${copy.length} arquivo(s) adicionados à lista`);
+    await loadList(true);
+  }catch(e){ toast(`Erro: ${e.message}`, true); }
+};
+
+$('obDismissAll').onclick = ()=>{
+  if(!outbox.length) return;
+  if(!confirm(`Descartar todos os ${outbox.length} arquivos da caixa? (os arquivos continuam no disco)`)) return;
+  outbox = [];
+  saveOutbox();
+  renderOutbox();
+};
 
 /* ---- liga / desliga ---- */
 $('btnWatch').onclick = async ()=>{
@@ -1213,6 +1259,219 @@ $('btnWatch').onclick = async ()=>{
 window.addEventListener('beforeunload', e=>{
   if(watching){ e.preventDefault(); e.returnValue = ''; }
 });
+
+/* =====================================================================
+   ROTEIRO — importar PDF, casar laudas VT com arquivos, reescrever lista
+===================================================================== */
+if(window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+let roteiroDraft = [];   // [{label, matchPath|null, score, options: [{path,name,score}]}]
+
+/* --- normalização e tokenização --- */
+const STOPWORDS = new Set(['de','da','do','das','dos','a','o','as','os','e','em','no','na','nos','nas','com','para','por','pra','pro']);
+
+function tokens(s){
+  return s
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase()
+    .replace(/\.[a-z0-9]{2,4}$/,'')     // tira extensão se for nome de arquivo
+    .replace(/[^a-z0-9]+/g,' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 2 && !STOPWORDS.has(t));
+}
+
+/* --- extrai texto do PDF (usa pdf.js) --- */
+async function extractPdfText(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  let lines = [];
+  for(let p=1; p<=pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    // reconstrói linhas agrupando por Y aproximado
+    const byY = new Map();
+    tc.items.forEach(it=>{
+      const y = Math.round(it.transform[5]);
+      const arr = byY.get(y) || [];
+      arr.push({x: it.transform[4], s: it.str});
+      byY.set(y, arr);
+    });
+    const ys = [...byY.keys()].sort((a,b)=> b-a);   // topo -> base
+    ys.forEach(y=>{
+      const arr = byY.get(y).sort((a,b)=> a.x - b.x);
+      // separa colunas por gaps grandes de X
+      let out = '';
+      let lastX = -Infinity;
+      arr.forEach(({x,s})=>{
+        if(!s) return;
+        if(x - lastX > 15) out += '  ';       // gap = separador de coluna
+        else if(out && !out.endsWith(' ') && !s.startsWith(' ')) out += '';
+        out += s;
+        lastX = x + s.length * 3;
+      });
+      if(out.trim()) lines.push(out.trim());
+    });
+  }
+  return lines;
+}
+
+/* --- extrai laudas VT das linhas do PDF --- */
+function parseVts(lines){
+  const out = [];
+  const re = /\bVT\b\s{2,}(.+?)\s{2,}\d{1,2}:\d{2}\s*$/;   // "VT   NOME   DD:DD"
+  const reAlt = /\bVT\b\s+(.+?)\s+\d{1,2}:\d{2}\s*$/;      // fallback com 1+ espaços
+  lines.forEach(ln=>{
+    let m = ln.match(re) || ln.match(reAlt);
+    if(m){
+      const label = m[1].trim().replace(/\s+/g,' ');
+      if(label && label.length > 2 && !/^VT$/i.test(label)) out.push(label);
+    }
+  });
+  return out;
+}
+
+/* --- matcher fuzzy com IDF simplificado --- */
+function matchLaudas(laudas, allItems){
+  // frequência de cada token nos arquivos, pra dar peso maior aos raros
+  const df = new Map();
+  const fileTokens = allItems.map(it => {
+    const ts = new Set(tokens(it.name));
+    ts.forEach(t => df.set(t, (df.get(t) || 0) + 1));
+    return {item: it, tokens: ts};
+  });
+  const N = Math.max(allItems.length, 1);
+  const idf = t => Math.log(N / (df.get(t) || N));
+
+  return laudas.map(label=>{
+    const lt = [...new Set(tokens(label))];
+    if(!lt.length) return {label, matchPath:null, score:0, options:[]};
+    const totalWeight = lt.reduce((s,t)=> s + Math.max(idf(t), 0.1), 0) || 1;
+
+    const scores = fileTokens.map(({item, tokens: ft})=>{
+      let s = 0;
+      for(const t of lt) if(ft.has(t)) s += Math.max(idf(t), 0.1);
+      return {path: item.path, name: item.name, score: s / totalWeight};
+    }).filter(x => x.score > 0)
+      .sort((a,b)=> b.score - a.score);
+
+    const best = scores[0];
+    return {
+      label,
+      matchPath: best && best.score >= 0.35 ? best.path : null,
+      score: best ? best.score : 0,
+      options: scores.slice(0, 8)
+    };
+  });
+}
+
+/* --- UI: abrir seletor de PDF --- */
+$('btnRoteiro').onclick = ()=>{
+  if(!items.length){ toast('Carregue a lista do vMix primeiro (input + inputs).', true); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.pdf,application/pdf';
+  inp.onchange = async ()=>{
+    const f = inp.files[0];
+    if(!f) return;
+    if(!window.pdfjsLib){ toast('PDF.js não carregou — verifique a conexão.', true); return; }
+    try{
+      toast('Lendo PDF…');
+      const lines = await extractPdfText(f);
+      const laudas = parseVts(lines);
+      if(!laudas.length){
+        toast('Nenhuma lauda "VT" encontrada no PDF. O formato mudou?', true);
+        return;
+      }
+      roteiroDraft = matchLaudas(laudas, items);
+      renderRoteiroModal();
+      $('rotMask').classList.add('open');
+    }catch(e){
+      toast('Falha ao ler o PDF: '+e.message, true);
+    }
+  };
+  inp.click();
+};
+
+function renderRoteiroModal(){
+  const list = $('rotList');
+  list.innerHTML = '';
+  roteiroDraft.forEach((r, i)=>{
+    const cls = !r.matchPath ? 'miss' : (r.score >= 0.6 ? 'ok' : 'weak');
+    const row = document.createElement('div');
+    row.className = 'rot-row ' + cls;
+    // dropdown com todas as opções + "não usar"
+    const optsHtml = ['<option value="">— não usar este VT —</option>'];
+    r.options.forEach(o=>{
+      const sel = o.path === r.matchPath ? ' selected' : '';
+      optsHtml.push(`<option value="${escapeHTML(o.path)}"${sel}>${escapeHTML(o.name)} · ${Math.round(o.score*100)}%</option>`);
+    });
+    // se o match escolhido não estiver nas top 8, adiciona
+    items.forEach(it=>{
+      if(!r.options.some(o=>o.path === it.path)){
+        optsHtml.push(`<option value="${escapeHTML(it.path)}">${escapeHTML(it.name)}</option>`);
+      }
+    });
+    row.innerHTML = `
+      <span class="rot-n">${i+1}</span>
+      <span class="rot-label" title="${escapeHTML(r.label)}">VT ${escapeHTML(r.label)}</span>
+      <span class="rot-arrow">→</span>
+      <select></select>
+      <span class="rot-conf">${r.matchPath ? Math.round(r.score*100)+'%' : 'sem match'}</span>`;
+    const sel = row.querySelector('select');
+    sel.innerHTML = optsHtml.join('');
+    sel.onchange = ()=>{
+      r.matchPath = sel.value || null;
+      const o = r.options.find(x => x.path === sel.value);
+      r.score = o ? o.score : (sel.value ? 1 : 0);
+      renderRoteiroModal();   // re-renderiza pra atualizar cor/porcentagem/resumo
+    };
+    list.appendChild(row);
+  });
+  const matched = roteiroDraft.filter(r => r.matchPath).length;
+  $('rotInfo').textContent = `${matched}/${roteiroDraft.length} VTs casados`;
+  $('rotSub').textContent = matched === roteiroDraft.length
+    ? `Todos os ${roteiroDraft.length} VTs do roteiro casaram com arquivos da lista. Confira antes de aplicar.`
+    : `${roteiroDraft.length - matched} VT(s) do roteiro sem match — escolha o arquivo no dropdown ou deixe "não usar".`;
+}
+
+$('rotCancel').onclick = ()=> $('rotMask').classList.remove('open');
+$('rotMask').onclick = (e)=>{ if(e.target === $('rotMask')) $('rotMask').classList.remove('open'); };
+
+$('rotApply').onclick = async ()=>{
+  const roteiroPaths = roteiroDraft.filter(r => r.matchPath).map(r => r.matchPath);
+  if(!roteiroPaths.length){ toast('Nenhum VT casado — nada a aplicar.', true); return; }
+  const rest = items.filter(it => !roteiroPaths.includes(it.path)).map(it => it.path);
+  const total = roteiroPaths.length + rest.length;
+  const ok = confirm(
+    `APLICAR ORDEM DO ROTEIRO\n\n` +
+    `A lista do vMix será reescrita:\n` +
+    `  • ${roteiroPaths.length} VT(s) do roteiro no topo (na ordem do roteiro)\n` +
+    `  • ${rest.length} arquivo(s) restantes logo depois\n` +
+    `  • Total: ${total} itens\n\n` +
+    `⚠ NÃO faça isso com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
+  );
+  if(!ok) return;
+
+  try{
+    setStatus(true, 'reescrevendo lista…');
+    $('rotMask').classList.remove('open');
+    await fn('ListRemoveAll', {Input: cfg.inputKey});
+    for(const p of [...roteiroPaths, ...rest]){
+      await fn('ListAdd', {Input: cfg.inputKey, Value: p});
+    }
+    // guarda a ordem do roteiro pra futuras "atualizações do roteiro"
+    cfg.roteiro = cfg.roteiro || {};
+    cfg.roteiro[cfg.inputKey] = roteiroPaths;
+    save();
+    toast(`✔ Lista reescrita: ${roteiroPaths.length} VTs do roteiro no topo`);
+    await loadList();
+  }catch(e){
+    toast('Erro ao aplicar: '+e.message, true);
+  }
+};
 
 /* ================= Boot ================= */
 loadInputs();
