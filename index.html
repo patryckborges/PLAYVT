@@ -421,6 +421,21 @@
   #ipBox .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
   #ipBox .foot .left{margin-right:auto}
   #ipBox button.primary{border-color:var(--green);color:var(--green)}
+
+  /* ---------- Modal de raiz ---------- */
+  #rootMask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
+  #rootMask.open{display:flex}
+  #rootBox{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px;width:min(560px,92vw)}
+  #rootBox h3{font-size:13px;letter-spacing:.14em;color:var(--amber);margin-bottom:6px}
+  #rootBox .sub{color:var(--dim);font-size:11px;margin-bottom:14px;line-height:1.5}
+  #rootBox label{display:block;font-size:10.5px;color:var(--dim);letter-spacing:.06em;font-weight:700;margin:10px 0 4px}
+  #rootBox input{width:100%;padding:8px 10px;font-family:var(--mono);font-size:12px;background:#0c1014;border:1px solid var(--line);border-radius:5px;color:var(--txt)}
+  #rootBox .row2{display:flex;gap:8px;align-items:center;margin-top:8px}
+  #rootBox .row2 button{padding:7px 12px}
+  #rootBox .row2 .status{font-family:var(--mono);font-size:11px;color:var(--dim);flex:1}
+  #rootBox .row2 .status.ok{color:var(--green)}
+  #rootBox .row2 .status.err{color:var(--red)}
+  #rootBox .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -447,13 +462,16 @@
       <span class="val none" id="srcName">nenhuma pasta conectada</span>
     </div>
 
+    <span class="lbl">PASTA RAIZ (uma vez)</span>
+    <div class="pathline">
+      <button id="btnRoot">Configurar…</button>
+      <span class="val none" id="rootName">configure a raiz e escolha a subpasta depois</span>
+    </div>
+
     <span class="lbl">PASTA DE DESTINO</span>
     <div class="pathline">
-      <input type="text" id="destPath" style="flex:1"
-        placeholder="cole aqui o caminho da barra do Explorer, ex: D:\conteudo\copa do mundo 2026\19.07\videos"
-        spellcheck="false">
-      <button id="btnDest">Conectar…</button>
-      <span class="val none" id="destName" style="flex:0 0 auto">—</span>
+      <button id="btnDest">Escolher…</button>
+      <span class="val none" id="destName">—</span>
     </div>
   </div>
 
@@ -463,7 +481,7 @@
     <span class="hint">verifica a cada 10s · inclui subpastas · espera o upload do produtor terminar</span>
   </div>
 
-  <div id="aiLog"><span class="info">Pronto. Conecte a pasta da produção, cole o caminho do destino, clique em Conectar e ligue.</span></div>
+  <div id="aiLog"><span class="info">1) Conecte a pasta da produção · 2) Configure a raiz (só uma vez) · 3) Escolha a subpasta do dia · 4) Ligue.</span></div>
 </div>
 
 <div class="searchbar">
@@ -530,6 +548,23 @@
   <span class="spacer"></span>
   <label class="chk"><input type="checkbox" id="autoRef" checked> auto-atualizar (5s)</label>
 </footer>
+
+<div id="rootMask">
+  <div id="rootBox">
+    <h3>PASTA RAIZ DO CONTEÚDO</h3>
+    <div class="sub">Configure uma vez o caminho da raiz (ex: <b>D:\CONTEÚDO</b>) e conecte a pasta correspondente no seletor. Depois disso, todo dia é só clicar em "Escolher…" pra pegar a subpasta do dia — o app monta o caminho completo sozinho.</div>
+    <label>CAMINHO ABSOLUTO DA RAIZ</label>
+    <input type="text" id="rootPathInput" placeholder="D:\CONTEÚDO" spellcheck="false">
+    <div class="row2">
+      <button id="rootPick">Conectar pasta no disco…</button>
+      <span class="status" id="rootStatus">nenhuma pasta conectada ainda</span>
+    </div>
+    <div class="foot">
+      <button id="rootCancel">Cancelar</button>
+      <button id="rootSave" class="primary">Salvar</button>
+    </div>
+  </div>
+</div>
 
 <div id="ipMask">
   <div id="ipBox">
@@ -968,7 +1003,7 @@ $('autoRef').onchange = setAuto;
    AUTO-IMPORT  (File System Access API — Chrome/Edge)
    share da produção  ->  disco local  ->  ListAdd no vMix
 ===================================================================== */
-let srcHandle = null, destHandle = null;
+let srcHandle = null, destHandle = null, rootHandle = null;
 let watching = false;
 let aiTimer = null;
 let knownFiles = new Map();   // relpath -> {size, mtime, stable, done}
@@ -1086,8 +1121,23 @@ async function verifyPermission(handle, write){
 function updateAIUI(){
   $('srcName').textContent  = srcHandle  ? '📁 ' + srcHandle.name  : 'nenhuma pasta conectada';
   $('srcName').className    = 'val' + (srcHandle ? '' : ' none');
-  $('destName').textContent = destHandle ? '✔ validada' : '—';
-  $('destName').className   = 'val' + (destHandle ? '' : ' none');
+
+  if(rootHandle && cfg.rootPath){
+    $('rootName').textContent = `📁 ${rootHandle.name} · ${cfg.rootPath}`;
+    $('rootName').className = 'val';
+  }else{
+    $('rootName').textContent = 'configure a raiz e escolha a subpasta depois';
+    $('rootName').className = 'val none';
+  }
+
+  if(destHandle && cfg.destPath){
+    $('destName').textContent = `✔ ${cfg.destPath}`;
+    $('destName').className = 'val';
+  }else{
+    $('destName').textContent = '—';
+    $('destName').className = 'val none';
+  }
+
   const b = $('btnWatch');
   b.textContent = watching ? '■ DESLIGAR AUTO-IMPORT' : '▶ LIGAR AUTO-IMPORT';
   b.className = watching ? 'toggle-on' : '';
@@ -1105,41 +1155,76 @@ $('btnSrc').onclick = async ()=>{
   }catch(e){ /* cancelado */ }
 };
 
-$('btnDest').onclick = async ()=>{
-  const typed = $('destPath').value.trim().replace(/[\\/]+$/,'');
-  if(!typed){
-    aiLog('Cole primeiro o caminho da pasta (copie da barra de endereço do Explorer) e depois clique em Conectar.', 'err');
-    $('destPath').focus();
-    return;
-  }
+/* ---- Modal: configurar a pasta raiz uma única vez ---- */
+let pendingRootHandle = null;
+
+$('btnRoot').onclick = ()=>{
+  pendingRootHandle = rootHandle;
+  $('rootPathInput').value = cfg.rootPath || 'D:\\CONTEÚDO';
+  $('rootStatus').textContent = rootHandle ? `📁 conectada: ${rootHandle.name}` : 'nenhuma pasta conectada ainda';
+  $('rootStatus').className = 'status' + (rootHandle ? ' ok' : '');
+  $('rootMask').classList.add('open');
+};
+$('rootCancel').onclick = ()=> $('rootMask').classList.remove('open');
+$('rootMask').onclick = (e)=>{ if(e.target === $('rootMask')) $('rootMask').classList.remove('open'); };
+
+$('rootPick').onclick = async ()=>{
   try{
     const h = await showDirectoryPicker({mode:'readwrite'});
-    const lastSeg = typed.split(/[\\/]/).pop();
-    if(norm(h.name) !== norm(lastSeg)){
-      aiLog(`A pasta escolhida ("${h.name}") não bate com o final do caminho digitado ("${lastSeg}"). Escolha exatamente a mesma pasta do caminho.`, 'err');
-      return;
-    }
-    destHandle = h;
-    cfg.destPath = typed;
-    $('destPath').value = typed;
-    save();
-    await idbSet('dest', h);
-    aiLog(`✔ Pasta de destino conectada e validada: ${typed}`, 'ok');
-    updateAIUI();
+    pendingRootHandle = h;
+    $('rootStatus').textContent = `📁 conectada: ${h.name}`;
+    $('rootStatus').className = 'status ok';
   }catch(e){ /* cancelado */ }
 };
 
-$('destPath').value = cfg.destPath || '';
-$('destPath').addEventListener('change', ()=>{
-  const typed = $('destPath').value.trim().replace(/[\\/]+$/,'');
-  $('destPath').value = typed;
-  if(destHandle && norm(destHandle.name) !== norm(typed.split(/[\\/]/).pop())){
-    destHandle = null;
-    aiLog('O caminho mudou — clique em Conectar de novo pra validar a nova pasta.', 'warn');
+$('rootSave').onclick = async ()=>{
+  const typed = $('rootPathInput').value.trim().replace(/[\\/]+$/,'');
+  if(!typed){ $('rootStatus').textContent = 'digite o caminho da raiz'; $('rootStatus').className = 'status err'; return; }
+  if(!pendingRootHandle){ $('rootStatus').textContent = 'clique em "Conectar pasta no disco…" pra selecionar'; $('rootStatus').className = 'status err'; return; }
+  const lastSeg = typed.split(/[\\/]/).pop();
+  if(norm(pendingRootHandle.name) !== norm(lastSeg)){
+    $('rootStatus').textContent = `a pasta escolhida ("${pendingRootHandle.name}") não bate com o final do caminho ("${lastSeg}")`;
+    $('rootStatus').className = 'status err';
+    return;
   }
-  cfg.destPath = typed; save();
+  rootHandle = pendingRootHandle;
+  cfg.rootPath = typed;
+  save();
+  await idbSet('root', rootHandle);
+  aiLog(`✔ Raiz configurada: ${typed}`, 'ok');
+  $('rootMask').classList.remove('open');
+  // se destino era descendente da raiz, revalida
+  if(destHandle){
+    const rel = await rootHandle.resolve(destHandle);
+    if(rel){ cfg.destPath = typed + '\\' + rel.join('\\'); save(); }
+  }
   updateAIUI();
-});
+};
+
+/* ---- Destino: só selecionar, o app deriva o caminho ---- */
+$('btnDest').onclick = async ()=>{
+  if(!rootHandle || !cfg.rootPath){
+    aiLog('Configure primeiro a pasta raiz (botão "Configurar…").', 'err');
+    return;
+  }
+  try{
+    const opts = {mode:'readwrite'};
+    // abre o seletor JÁ dentro da raiz — economiza cliques
+    try{ opts.startIn = rootHandle; }catch(e){}
+    const h = await showDirectoryPicker(opts);
+    const rel = await rootHandle.resolve(h);
+    if(!rel){
+      aiLog(`A pasta "${h.name}" não está dentro da raiz configurada (${cfg.rootPath}). Selecione uma subpasta da raiz, ou reconfigure a raiz se mudou.`, 'err');
+      return;
+    }
+    destHandle = h;
+    cfg.destPath = cfg.rootPath + (rel.length ? '\\' + rel.join('\\') : '');
+    save();
+    await idbSet('dest', h);
+    aiLog(`✔ Destino: ${cfg.destPath}`, 'ok');
+    updateAIUI();
+  }catch(e){ /* cancelado */ }
+};
 
 /* ---- varredura recursiva da origem ---- */
 async function* walk(dir, prefix=''){
@@ -1368,7 +1453,7 @@ $('btnWatch').onclick = async ()=>{
   }
   if(!aiSupported()){ aiLog('Navegador sem suporte (use Chrome/Edge, página em HTTPS ou localhost).', 'err'); return; }
   if(!srcHandle || !destHandle){ aiLog('Conecte a pasta da produção E a pasta de destino primeiro.', 'err'); return; }
-  if(!cfg.destPath){ aiLog('Preencha o caminho REAL da pasta de destino (ex: D:\\conteudo\\...\\videos).', 'err'); return; }
+  if(!cfg.destPath){ aiLog('Configure a pasta raiz e escolha a subpasta de destino.', 'err'); return; }
   if(!cfg.inputKey){ aiLog('Selecione o input List no topo da página.', 'err'); return; }
 
   if(!await verifyPermission(srcHandle, false)){ aiLog('Permissão negada na pasta da produção.', 'err'); return; }
@@ -1396,8 +1481,9 @@ $('btnWatch').onclick = async ()=>{
   try{
     const s = await idbGet('src');
     const d = await idbGet('dest');
-    if(s || d){
-      srcHandle = s; destHandle = d;
+    const r = await idbGet('root');
+    if(s || d || r){
+      srcHandle = s; destHandle = d; rootHandle = r;
       updateAIUI();
       aiLog('Pastas da última sessão lembradas — ao ligar, o navegador pode pedir pra confirmar o acesso (1 clique).', 'info');
     }
