@@ -462,12 +462,6 @@
       <span class="val none" id="srcName">nenhuma pasta conectada</span>
     </div>
 
-    <span class="lbl">PASTA RAIZ (uma vez)</span>
-    <div class="pathline">
-      <button id="btnRoot">Configurar…</button>
-      <span class="val none" id="rootName">configure a raiz e escolha a subpasta depois</span>
-    </div>
-
     <span class="lbl">PASTA DE DESTINO</span>
     <div class="pathline">
       <button id="btnDest">Escolher…</button>
@@ -481,7 +475,7 @@
     <span class="hint">verifica a cada 10s · inclui subpastas · espera o upload do produtor terminar</span>
   </div>
 
-  <div id="aiLog"><span class="info">1) Conecte a pasta da produção · 2) Configure a raiz (só uma vez) · 3) Escolha a subpasta do dia · 4) Ligue.</span></div>
+  <div id="aiLog"><span class="info">Escolha a pasta da produção e a pasta de destino do dia — depois ligue o auto-import.</span></div>
 </div>
 
 <div class="searchbar">
@@ -548,31 +542,6 @@
   <span class="spacer"></span>
   <label class="chk"><input type="checkbox" id="autoRef" checked> auto-atualizar (5s)</label>
 </footer>
-
-<div id="rootMask">
-  <div id="rootBox">
-    <h3>PASTA RAIZ DO CONTEÚDO</h3>
-    <div class="sub">
-      Configure a parte do caminho que <b>nunca muda</b>. No seu caso: <code style="background:#0c1014;padding:1px 5px;border-radius:3px;color:var(--amber)">D:\CONTEÚDO</code><br><br>
-      Estrutura típica sua: <code style="background:#0c1014;padding:1px 5px;border-radius:3px;font-size:10.5px">D:\<b style="color:var(--amber)">CONTEÚDO</b>\GERAL CAZÉ TV\<i style="color:var(--dim)">24.07</i>\<i style="color:var(--dim)">AGORA VAI</i></code><br>
-      <span style="color:var(--amber)">■ fixo (raiz)</span> · <span style="color:var(--dim)">■ varia (você escolhe todo dia)</span>
-    </div>
-    <label>PASSO 1: CAMINHO ABSOLUTO DA PASTA RAIZ</label>
-    <input type="text" id="rootPathInput" placeholder="D:\CONTEÚDO" spellcheck="false">
-    <label>PASSO 2: CONECTE ESSA MESMA PASTA NO DISCO</label>
-    <div class="row2">
-      <button id="rootPick">Conectar pasta no disco…</button>
-      <span class="status" id="rootStatus">nenhuma pasta conectada ainda</span>
-    </div>
-    <div class="sub" style="margin-top:10px;font-size:10.5px">
-      No seletor, navegue até a pasta <b>CONTEÚDO</b> (a de cima) e selecione ela — <b>não</b> uma subpasta profunda. Depois de salvar, é só escolher a subpasta do dia no botão "Escolher…" abaixo.
-    </div>
-    <div class="foot">
-      <button id="rootCancel">Cancelar</button>
-      <button id="rootSave" class="primary">Salvar</button>
-    </div>
-  </div>
-</div>
 
 <div id="ipMask">
   <div id="ipBox">
@@ -1019,6 +988,7 @@ let scanning = false;
 
 const AI_INTERVAL = 10000;    // 10s
 const STABLE_SCANS = 2;       // nº de varreduras com tamanho igual antes de copiar
+const ROOT_PATH = 'D:\\CONTEÚDOS';   // pasta raiz fixa da CazéTV — o operador nunca salva fora daqui
 
 /* ---- Estado de progresso das cópias ---- */
 let copyProgress = null;      // {name, done, total} enquanto está copiando
@@ -1130,14 +1100,6 @@ function updateAIUI(){
   $('srcName').textContent  = srcHandle  ? '📁 ' + srcHandle.name  : 'nenhuma pasta conectada';
   $('srcName').className    = 'val' + (srcHandle ? '' : ' none');
 
-  if(rootHandle && cfg.rootPath){
-    $('rootName').textContent = `📁 ${rootHandle.name} · ${cfg.rootPath}`;
-    $('rootName').className = 'val';
-  }else{
-    $('rootName').textContent = 'configure a raiz e escolha a subpasta depois';
-    $('rootName').className = 'val none';
-  }
-
   if(destHandle && cfg.destPath){
     $('destName').textContent = `✔ ${cfg.destPath}`;
     $('destName').className = 'val';
@@ -1163,72 +1125,54 @@ $('btnSrc').onclick = async ()=>{
   }catch(e){ /* cancelado */ }
 };
 
-/* ---- Modal: configurar a pasta raiz uma única vez ---- */
-let pendingRootHandle = null;
-
-$('btnRoot').onclick = ()=>{
-  pendingRootHandle = rootHandle;
-  $('rootPathInput').value = cfg.rootPath || 'D:\\CONTEÚDO';
-  $('rootStatus').textContent = rootHandle ? `📁 conectada: ${rootHandle.name}` : 'nenhuma pasta conectada ainda';
-  $('rootStatus').className = 'status' + (rootHandle ? ' ok' : '');
-  $('rootMask').classList.add('open');
-};
-$('rootCancel').onclick = ()=> $('rootMask').classList.remove('open');
-$('rootMask').onclick = (e)=>{ if(e.target === $('rootMask')) $('rootMask').classList.remove('open'); };
-
-$('rootPick').onclick = async ()=>{
+/* ---- Garante que rootHandle está conectada (só na 1ª vez) ---- */
+async function ensureRoot(){
+  if(rootHandle){
+    // reobter permissão se preciso
+    if(await verifyPermission(rootHandle, true)) return true;
+    rootHandle = null;
+  }
+  const rootName = ROOT_PATH.split(/[\\/]/).pop();
+  alert(
+    `Primeira vez usando o app neste PC.\n\n` +
+    `O navegador precisa que você conceda acesso à pasta "${rootName}" uma única vez.\n\n` +
+    `Ao clicar OK, um seletor de pastas vai abrir. Navegue até "${ROOT_PATH}" e selecione a pasta "${rootName}".\n` +
+    `Depois disso, você nunca mais precisará fazer isso.`
+  );
   try{
     const h = await showDirectoryPicker({mode:'readwrite'});
-    pendingRootHandle = h;
-    $('rootStatus').textContent = `📁 conectada: ${h.name}`;
-    $('rootStatus').className = 'status ok';
-  }catch(e){ /* cancelado */ }
-};
-
-$('rootSave').onclick = async ()=>{
-  const typed = $('rootPathInput').value.trim().replace(/[\\/]+$/,'');
-  if(!typed){ $('rootStatus').textContent = 'digite o caminho da raiz'; $('rootStatus').className = 'status err'; return; }
-  if(!pendingRootHandle){ $('rootStatus').textContent = 'clique em "Conectar pasta no disco…" pra selecionar'; $('rootStatus').className = 'status err'; return; }
-  const lastSeg = typed.split(/[\\/]/).pop();
-  if(norm(pendingRootHandle.name) !== norm(lastSeg)){
-    $('rootStatus').innerHTML =
-      `❌ Você digitou <b>"${escapeHTML(typed)}"</b> mas selecionou a pasta <b>"${escapeHTML(pendingRootHandle.name)}"</b>.<br>` +
-      `Provavelmente navegou muito fundo no seletor. Clique em "Conectar pasta no disco…" de novo e selecione a pasta <b>"${escapeHTML(lastSeg)}"</b> — não uma subpasta dela.`;
-    $('rootStatus').className = 'status err';
-    return;
-  }
-  rootHandle = pendingRootHandle;
-  cfg.rootPath = typed;
-  save();
-  await idbSet('root', rootHandle);
-  aiLog(`✔ Raiz configurada: ${typed}`, 'ok');
-  $('rootMask').classList.remove('open');
-  if(destHandle){
-    const rel = await rootHandle.resolve(destHandle);
-    if(rel){ cfg.destPath = typed + (rel.length ? '\\' + rel.join('\\') : ''); save(); }
-    else { destHandle = null; cfg.destPath = ''; save(); aiLog('O destino anterior não está dentro da nova raiz — selecione o destino de novo.', 'warn'); }
-  }
-  updateAIUI();
-};
+    if(norm(h.name) !== norm(rootName)){
+      alert(
+        `A pasta selecionada ("${h.name}") não é "${rootName}".\n\n` +
+        `Provavelmente você navegou muito fundo no seletor. Ao clicar em "Escolher…" de novo, ` +
+        `selecione a pasta chamada "${rootName}" — a que fica direto em D:\\ — e não uma subpasta.`
+      );
+      return false;
+    }
+    rootHandle = h;
+    cfg.rootPath = ROOT_PATH;
+    save();
+    await idbSet('root', h);
+    aiLog(`✔ Acesso à raiz ${ROOT_PATH} concedido.`, 'ok');
+    return true;
+  }catch(e){ return false; }
+}
 
 /* ---- Destino: só selecionar, o app deriva o caminho ---- */
 $('btnDest').onclick = async ()=>{
-  if(!rootHandle || !cfg.rootPath){
-    aiLog('Configure primeiro a pasta raiz (botão "Configurar…").', 'err');
-    return;
-  }
+  if(!await ensureRoot()) return;
   try{
     const opts = {mode:'readwrite'};
-    // abre o seletor JÁ dentro da raiz — economiza cliques
     try{ opts.startIn = rootHandle; }catch(e){}
     const h = await showDirectoryPicker(opts);
     const rel = await rootHandle.resolve(h);
     if(!rel){
-      aiLog(`A pasta "${h.name}" não está dentro da raiz configurada (${cfg.rootPath}). Selecione uma subpasta da raiz, ou reconfigure a raiz se mudou.`, 'err');
+      aiLog(`A pasta "${h.name}" não está dentro de ${ROOT_PATH}. Escolha uma subpasta dentro dessa raiz.`, 'err');
+      alert(`A pasta "${h.name}" que você escolheu não está dentro de ${ROOT_PATH}.\n\nEscolha uma subpasta dentro dessa raiz.`);
       return;
     }
     destHandle = h;
-    cfg.destPath = cfg.rootPath + (rel.length ? '\\' + rel.join('\\') : '');
+    cfg.destPath = ROOT_PATH + (rel.length ? '\\' + rel.join('\\') : '');
     save();
     await idbSet('dest', h);
     aiLog(`✔ Destino: ${cfg.destPath}`, 'ok');
