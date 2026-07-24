@@ -1369,7 +1369,15 @@ function matchLaudas(laudas, allItems){
 
 /* --- UI: abrir seletor de PDF --- */
 $('btnRoteiro').onclick = ()=>{
-  if(!items.length){ toast('Carregue a lista do vMix primeiro (input + inputs).', true); return; }
+  const pool = [...items, ...outbox];   // casa contra lista do vMix + caixa de entrada
+  if(!pool.length){
+    toast('Não há arquivos disponíveis — carregue a lista do vMix ou aguarde o auto-import copiar algum arquivo.', true);
+    return;
+  }
+  if(!cfg.inputKey){
+    toast('Selecione um input List no topo primeiro.', true);
+    return;
+  }
   const inp = document.createElement('input');
   inp.type = 'file';
   inp.accept = '.pdf,application/pdf';
@@ -1385,7 +1393,7 @@ $('btnRoteiro').onclick = ()=>{
         toast('Nenhuma lauda "VT" encontrada no PDF. O formato mudou?', true);
         return;
       }
-      roteiroDraft = matchLaudas(laudas, items);
+      roteiroDraft = matchLaudas(laudas, pool);
       renderRoteiroModal();
       $('rotMask').classList.add('open');
     }catch(e){
@@ -1398,20 +1406,24 @@ $('btnRoteiro').onclick = ()=>{
 function renderRoteiroModal(){
   const list = $('rotList');
   list.innerHTML = '';
+  const outboxPaths = new Set(outbox.map(o => o.path));
+  const inOutbox = p => outboxPaths.has(p) ? ' 📥' : '';
+
   roteiroDraft.forEach((r, i)=>{
     const cls = !r.matchPath ? 'miss' : (r.score >= 0.6 ? 'ok' : 'weak');
     const row = document.createElement('div');
     row.className = 'rot-row ' + cls;
-    // dropdown com todas as opções + "não usar"
     const optsHtml = ['<option value="">— não usar este VT —</option>'];
     r.options.forEach(o=>{
       const sel = o.path === r.matchPath ? ' selected' : '';
-      optsHtml.push(`<option value="${escapeHTML(o.path)}"${sel}>${escapeHTML(o.name)} · ${Math.round(o.score*100)}%</option>`);
+      optsHtml.push(`<option value="${escapeHTML(o.path)}"${sel}>${escapeHTML(o.name)}${inOutbox(o.path)} · ${Math.round(o.score*100)}%</option>`);
     });
-    // se o match escolhido não estiver nas top 8, adiciona
-    items.forEach(it=>{
-      if(!r.options.some(o=>o.path === it.path)){
-        optsHtml.push(`<option value="${escapeHTML(it.path)}">${escapeHTML(it.name)}</option>`);
+    const shown = new Set(r.options.map(o=>o.path));
+    // resto (items + outbox) que não apareceu nas top 8
+    [...items, ...outbox].forEach(it=>{
+      if(!shown.has(it.path)){
+        optsHtml.push(`<option value="${escapeHTML(it.path)}">${escapeHTML(it.name)}${inOutbox(it.path)}</option>`);
+        shown.add(it.path);
       }
     });
     row.innerHTML = `
@@ -1426,15 +1438,17 @@ function renderRoteiroModal(){
       r.matchPath = sel.value || null;
       const o = r.options.find(x => x.path === sel.value);
       r.score = o ? o.score : (sel.value ? 1 : 0);
-      renderRoteiroModal();   // re-renderiza pra atualizar cor/porcentagem/resumo
+      renderRoteiroModal();
     };
     list.appendChild(row);
   });
   const matched = roteiroDraft.filter(r => r.matchPath).length;
-  $('rotInfo').textContent = `${matched}/${roteiroDraft.length} VTs casados`;
+  const fromOutbox = roteiroDraft.filter(r => r.matchPath && outboxPaths.has(r.matchPath)).length;
+  $('rotInfo').textContent = `${matched}/${roteiroDraft.length} casados` +
+    (fromOutbox ? ` · ${fromOutbox} da caixa de entrada 📥` : '');
   $('rotSub').textContent = matched === roteiroDraft.length
-    ? `Todos os ${roteiroDraft.length} VTs do roteiro casaram com arquivos da lista. Confira antes de aplicar.`
-    : `${roteiroDraft.length - matched} VT(s) do roteiro sem match — escolha o arquivo no dropdown ou deixe "não usar".`;
+    ? `Todos os ${roteiroDraft.length} VTs do roteiro casaram. 📥 = ainda na caixa de entrada, será importado automaticamente ao aplicar.`
+    : `${roteiroDraft.length - matched} VT(s) sem match — escolha manualmente no dropdown ou deixe "não usar".`;
 }
 
 $('rotCancel').onclick = ()=> $('rotMask').classList.remove('open');
@@ -1443,14 +1457,19 @@ $('rotMask').onclick = (e)=>{ if(e.target === $('rotMask')) $('rotMask').classLi
 $('rotApply').onclick = async ()=>{
   const roteiroPaths = roteiroDraft.filter(r => r.matchPath).map(r => r.matchPath);
   if(!roteiroPaths.length){ toast('Nenhum VT casado — nada a aplicar.', true); return; }
+  const outboxPaths = new Set(outbox.map(o => o.path));
+  const fromOutbox = roteiroPaths.filter(p => outboxPaths.has(p));
+  const fromList   = roteiroPaths.filter(p => !outboxPaths.has(p));
   const rest = items.filter(it => !roteiroPaths.includes(it.path)).map(it => it.path);
-  const total = roteiroPaths.length + rest.length;
+
   const ok = confirm(
     `APLICAR ORDEM DO ROTEIRO\n\n` +
     `A lista do vMix será reescrita:\n` +
-    `  • ${roteiroPaths.length} VT(s) do roteiro no topo (na ordem do roteiro)\n` +
+    `  • ${roteiroPaths.length} VT(s) do roteiro no topo (na ordem exata)\n` +
+    (fromOutbox.length ? `      — ${fromOutbox.length} vindos da CAIXA DE ENTRADA\n` : '') +
+    (fromList.length   ? `      — ${fromList.length} já estavam na lista\n` : '') +
     `  • ${rest.length} arquivo(s) restantes logo depois\n` +
-    `  • Total: ${total} itens\n\n` +
+    `  • Total: ${roteiroPaths.length + rest.length} itens\n\n` +
     `⚠ NÃO faça isso com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
   );
   if(!ok) return;
@@ -1461,12 +1480,19 @@ $('rotApply').onclick = async ()=>{
     await fn('ListRemoveAll', {Input: cfg.inputKey});
     for(const p of [...roteiroPaths, ...rest]){
       await fn('ListAdd', {Input: cfg.inputKey, Value: p});
+      const name = p.split(/[\\/]/).pop();
+      if(outboxPaths.has(p)) freshNames.add(name);
     }
-    // guarda a ordem do roteiro pra futuras "atualizações do roteiro"
+    // remove da caixa de entrada os que foram usados
+    outbox = outbox.filter(o => !outboxPaths.has(o.path) || !roteiroPaths.includes(o.path));
+    saveOutbox();
+    renderOutbox();
+
     cfg.roteiro = cfg.roteiro || {};
     cfg.roteiro[cfg.inputKey] = roteiroPaths;
     save();
-    toast(`✔ Lista reescrita: ${roteiroPaths.length} VTs do roteiro no topo`);
+    toast(`✔ Roteiro aplicado: ${roteiroPaths.length} VTs no topo` +
+          (fromOutbox.length ? ` (${fromOutbox.length} da caixa)` : ''));
     await loadList();
   }catch(e){
     toast('Erro ao aplicar: '+e.message, true);
