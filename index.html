@@ -307,6 +307,14 @@
     background:var(--amber);color:#000;font-weight:800;font-size:11px;
     padding:2px 7px;border-radius:3px;font-family:var(--mono);min-width:30px;text-align:center;
   }
+  .rot-row .rot-tipo{
+    font-family:var(--mono);font-size:9.5px;font-weight:800;letter-spacing:.06em;
+    padding:2px 6px;border-radius:3px;border:1px solid var(--line);
+    min-width:36px;text-align:center;flex:0 0 auto;
+  }
+  .rot-row .rot-tipo.VT{color:#6fb7ff;border-color:#2a4258;background:#0e1a2a}
+  .rot-row .rot-tipo.ARTE{color:#c79bff;border-color:#3d2f58;background:#1a1030}
+  .rot-row .rot-tipo.ILU{color:#7fe0c3;border-color:#1f4a3d;background:#0c2820}
   .rot-row .rot-label{
     flex:1;font-family:var(--mono);font-size:12px;overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap;color:var(--txt);
@@ -1318,16 +1326,19 @@ async function extractPdfText(file){
   return lines;
 }
 
-/* --- extrai laudas VT das linhas do PDF --- */
-function parseVts(lines){
+/* --- extrai laudas rodáveis (VT, ARTE, ILU) das linhas do PDF --- */
+function parseLaudas(lines){
   const out = [];
-  const re = /\bVT\b\s{2,}(.+?)\s{2,}\d{1,2}:\d{2}\s*$/;   // "VT   NOME   DD:DD"
-  const reAlt = /\bVT\b\s+(.+?)\s+\d{1,2}:\d{2}\s*$/;      // fallback com 1+ espaços
+  const TIPOS = 'VT|ARTE|ILU';
+  const re    = new RegExp(`\\b(${TIPOS})\\b\\s{2,}(.+?)\\s{2,}\\d{1,2}:\\d{2}\\s*$`);
+  const reAlt = new RegExp(`\\b(${TIPOS})\\b\\s+(.+?)\\s+\\d{1,2}:\\d{2}\\s*$`);
+  const isTipoOnly = new RegExp(`^(${TIPOS})$`, 'i');
   lines.forEach(ln=>{
     let m = ln.match(re) || ln.match(reAlt);
     if(m){
-      const label = m[1].trim().replace(/\s+/g,' ');
-      if(label && label.length > 2 && !/^VT$/i.test(label)) out.push(label);
+      const tipo = m[1].toUpperCase();
+      const label = m[2].trim().replace(/\s+/g,' ');
+      if(label && label.length > 2 && !isTipoOnly.test(label)) out.push({tipo, label});
     }
   });
   return out;
@@ -1335,7 +1346,6 @@ function parseVts(lines){
 
 /* --- matcher fuzzy com IDF simplificado --- */
 function matchLaudas(laudas, allItems){
-  // frequência de cada token nos arquivos, pra dar peso maior aos raros
   const df = new Map();
   const fileTokens = allItems.map(it => {
     const ts = new Set(tokens(it.name));
@@ -1345,9 +1355,9 @@ function matchLaudas(laudas, allItems){
   const N = Math.max(allItems.length, 1);
   const idf = t => Math.log(N / (df.get(t) || N));
 
-  return laudas.map(label=>{
+  return laudas.map(({tipo, label})=>{
     const lt = [...new Set(tokens(label))];
-    if(!lt.length) return {label, matchPath:null, score:0, options:[]};
+    if(!lt.length) return {tipo, label, matchPath:null, score:0, options:[]};
     const totalWeight = lt.reduce((s,t)=> s + Math.max(idf(t), 0.1), 0) || 1;
 
     const scores = fileTokens.map(({item, tokens: ft})=>{
@@ -1359,7 +1369,7 @@ function matchLaudas(laudas, allItems){
 
     const best = scores[0];
     return {
-      label,
+      tipo, label,
       matchPath: best && best.score >= 0.35 ? best.path : null,
       score: best ? best.score : 0,
       options: scores.slice(0, 8)
@@ -1388,9 +1398,9 @@ $('btnRoteiro').onclick = ()=>{
     try{
       toast('Lendo PDF…');
       const lines = await extractPdfText(f);
-      const laudas = parseVts(lines);
+      const laudas = parseLaudas(lines);
       if(!laudas.length){
-        toast('Nenhuma lauda "VT" encontrada no PDF. O formato mudou?', true);
+        toast('Nenhuma lauda VT/ARTE/ILU encontrada no PDF. O formato mudou?', true);
         return;
       }
       roteiroDraft = matchLaudas(laudas, pool);
@@ -1428,7 +1438,8 @@ function renderRoteiroModal(){
     });
     row.innerHTML = `
       <span class="rot-n">${i+1}</span>
-      <span class="rot-label" title="${escapeHTML(r.label)}">VT ${escapeHTML(r.label)}</span>
+      <span class="rot-tipo ${r.tipo}">${r.tipo}</span>
+      <span class="rot-label" title="${escapeHTML(r.label)}">${escapeHTML(r.label)}</span>
       <span class="rot-arrow">→</span>
       <select></select>
       <span class="rot-conf">${r.matchPath ? Math.round(r.score*100)+'%' : 'sem match'}</span>`;
@@ -1444,11 +1455,14 @@ function renderRoteiroModal(){
   });
   const matched = roteiroDraft.filter(r => r.matchPath).length;
   const fromOutbox = roteiroDraft.filter(r => r.matchPath && outboxPaths.has(r.matchPath)).length;
-  $('rotInfo').textContent = `${matched}/${roteiroDraft.length} casados` +
-    (fromOutbox ? ` · ${fromOutbox} da caixa de entrada 📥` : '');
+  const byType = {VT:0, ARTE:0, ILU:0};
+  roteiroDraft.forEach(r => byType[r.tipo]++);
+  const typeSummary = Object.entries(byType).filter(([,n])=>n>0).map(([t,n])=>`${n} ${t}`).join(' · ');
+  $('rotInfo').textContent = `${matched}/${roteiroDraft.length} casados · ${typeSummary}` +
+    (fromOutbox ? ` · ${fromOutbox} da caixa 📥` : '');
   $('rotSub').textContent = matched === roteiroDraft.length
-    ? `Todos os ${roteiroDraft.length} VTs do roteiro casaram. 📥 = ainda na caixa de entrada, será importado automaticamente ao aplicar.`
-    : `${roteiroDraft.length - matched} VT(s) sem match — escolha manualmente no dropdown ou deixe "não usar".`;
+    ? `Todas as ${roteiroDraft.length} laudas casaram. 📥 = ainda na caixa de entrada, será importado ao aplicar.`
+    : `${roteiroDraft.length - matched} lauda(s) sem match — escolha manualmente ou deixe "não usar".`;
 }
 
 $('rotCancel').onclick = ()=> $('rotMask').classList.remove('open');
@@ -1465,7 +1479,7 @@ $('rotApply').onclick = async ()=>{
   const ok = confirm(
     `APLICAR ORDEM DO ROTEIRO\n\n` +
     `A lista do vMix será reescrita:\n` +
-    `  • ${roteiroPaths.length} VT(s) do roteiro no topo (na ordem exata)\n` +
+    `  • ${roteiroPaths.length} lauda(s) do roteiro no topo (na ordem exata)\n` +
     (fromOutbox.length ? `      — ${fromOutbox.length} vindos da CAIXA DE ENTRADA\n` : '') +
     (fromList.length   ? `      — ${fromList.length} já estavam na lista\n` : '') +
     `  • ${rest.length} arquivo(s) restantes logo depois\n` +
@@ -1491,7 +1505,7 @@ $('rotApply').onclick = async ()=>{
     cfg.roteiro = cfg.roteiro || {};
     cfg.roteiro[cfg.inputKey] = roteiroPaths;
     save();
-    toast(`✔ Roteiro aplicado: ${roteiroPaths.length} VTs no topo` +
+    toast(`✔ Roteiro aplicado: ${roteiroPaths.length} laudas no topo` +
           (fromOutbox.length ? ` (${fromOutbox.length} da caixa)` : ''));
     await loadList();
   }catch(e){
