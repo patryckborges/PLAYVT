@@ -552,12 +552,20 @@
 <div id="rootMask">
   <div id="rootBox">
     <h3>PASTA RAIZ DO CONTEÚDO</h3>
-    <div class="sub">Configure uma vez o caminho da raiz (ex: <b>D:\CONTEÚDO</b>) e conecte a pasta correspondente no seletor. Depois disso, todo dia é só clicar em "Escolher…" pra pegar a subpasta do dia — o app monta o caminho completo sozinho.</div>
-    <label>CAMINHO ABSOLUTO DA RAIZ</label>
+    <div class="sub">
+      Configure a parte do caminho que <b>nunca muda</b>. No seu caso: <code style="background:#0c1014;padding:1px 5px;border-radius:3px;color:var(--amber)">D:\CONTEÚDO</code><br><br>
+      Estrutura típica sua: <code style="background:#0c1014;padding:1px 5px;border-radius:3px;font-size:10.5px">D:\<b style="color:var(--amber)">CONTEÚDO</b>\GERAL CAZÉ TV\<i style="color:var(--dim)">24.07</i>\<i style="color:var(--dim)">AGORA VAI</i></code><br>
+      <span style="color:var(--amber)">■ fixo (raiz)</span> · <span style="color:var(--dim)">■ varia (você escolhe todo dia)</span>
+    </div>
+    <label>PASSO 1: CAMINHO ABSOLUTO DA PASTA RAIZ</label>
     <input type="text" id="rootPathInput" placeholder="D:\CONTEÚDO" spellcheck="false">
+    <label>PASSO 2: CONECTE ESSA MESMA PASTA NO DISCO</label>
     <div class="row2">
       <button id="rootPick">Conectar pasta no disco…</button>
       <span class="status" id="rootStatus">nenhuma pasta conectada ainda</span>
+    </div>
+    <div class="sub" style="margin-top:10px;font-size:10.5px">
+      No seletor, navegue até a pasta <b>CONTEÚDO</b> (a de cima) e selecione ela — <b>não</b> uma subpasta profunda. Depois de salvar, é só escolher a subpasta do dia no botão "Escolher…" abaixo.
     </div>
     <div class="foot">
       <button id="rootCancel">Cancelar</button>
@@ -1183,7 +1191,9 @@ $('rootSave').onclick = async ()=>{
   if(!pendingRootHandle){ $('rootStatus').textContent = 'clique em "Conectar pasta no disco…" pra selecionar'; $('rootStatus').className = 'status err'; return; }
   const lastSeg = typed.split(/[\\/]/).pop();
   if(norm(pendingRootHandle.name) !== norm(lastSeg)){
-    $('rootStatus').textContent = `a pasta escolhida ("${pendingRootHandle.name}") não bate com o final do caminho ("${lastSeg}")`;
+    $('rootStatus').innerHTML =
+      `❌ Você digitou <b>"${escapeHTML(typed)}"</b> mas selecionou a pasta <b>"${escapeHTML(pendingRootHandle.name)}"</b>.<br>` +
+      `Provavelmente navegou muito fundo no seletor. Clique em "Conectar pasta no disco…" de novo e selecione a pasta <b>"${escapeHTML(lastSeg)}"</b> — não uma subpasta dela.`;
     $('rootStatus').className = 'status err';
     return;
   }
@@ -1193,10 +1203,10 @@ $('rootSave').onclick = async ()=>{
   await idbSet('root', rootHandle);
   aiLog(`✔ Raiz configurada: ${typed}`, 'ok');
   $('rootMask').classList.remove('open');
-  // se destino era descendente da raiz, revalida
   if(destHandle){
     const rel = await rootHandle.resolve(destHandle);
-    if(rel){ cfg.destPath = typed + '\\' + rel.join('\\'); save(); }
+    if(rel){ cfg.destPath = typed + (rel.length ? '\\' + rel.join('\\') : ''); save(); }
+    else { destHandle = null; cfg.destPath = ''; save(); aiLog('O destino anterior não está dentro da nova raiz — selecione o destino de novo.', 'warn'); }
   }
   updateAIUI();
 };
