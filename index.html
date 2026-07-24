@@ -250,6 +250,30 @@
   }
   #ctrlBar .vbtn.on{color:var(--green);border-color:var(--green);background:#0e2418}
 
+  /* ---------- Barra de progresso do Auto-Import ---------- */
+  #progBar{
+    background:#0e1a2a;border-bottom:1px solid var(--blue);
+    padding:8px 12px;display:none;font-family:var(--mono);font-size:11.5px;
+  }
+  #progBar.open{display:block}
+  #progBar.done{background:#0e2418;border-bottom-color:var(--green)}
+  #progBar .pb-head{
+    display:flex;align-items:center;gap:12px;color:var(--blue);font-weight:700;
+  }
+  #progBar.done .pb-head{color:var(--green)}
+  #progBar .pb-head .stats{margin-left:auto;color:var(--dim);font-weight:400;font-size:10.5px}
+  #progBar .pb-bar{
+    background:#0c1014;height:5px;border-radius:3px;margin-top:6px;overflow:hidden;
+  }
+  #progBar .pb-fill{
+    background:var(--blue);height:100%;width:0%;transition:width .15s linear;
+  }
+  #progBar.done .pb-fill{background:var(--green);width:100%!important}
+  #progBar .pb-name{
+    color:var(--txt);font-size:10.5px;margin-top:4px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+
   /* ---------- Outbox de novos arquivos (topo da lista) ---------- */
   #outbox{background:#1a1408;border-bottom:2px solid var(--amber);display:none}
   #outbox.open{display:block}
@@ -436,6 +460,15 @@
     <option value="ext">Tipo de arquivo</option>
   </select>
   <span class="hint"><kbd>/</kbd> busca &nbsp;<kbd>↑↓</kbd> navega &nbsp;<kbd>Enter</kbd> seleciona</span>
+</div>
+
+<div id="progBar">
+  <div class="pb-head">
+    <span id="pbLabel">Copiando…</span>
+    <span class="stats" id="pbStats"></span>
+  </div>
+  <div class="pb-bar"><div class="pb-fill" id="pbFill"></div></div>
+  <div class="pb-name" id="pbName"></div>
 </div>
 
 <div id="outbox">
@@ -923,6 +956,59 @@ let scanning = false;
 const AI_INTERVAL = 10000;    // 10s
 const STABLE_SCANS = 2;       // nº de varreduras com tamanho igual antes de copiar
 
+/* ---- Estado de progresso das cópias ---- */
+let copyProgress = null;      // {name, done, total} enquanto está copiando
+let importedCount = 0;        // total copiado desde o "ligar auto-import"
+let pbDoneTimer = null;
+
+function pendingCount(){
+  // arquivos detectados aguardando estabilizar (upload ainda em andamento)
+  let n = 0;
+  for(const v of knownFiles.values()) if(!v.done) n++;
+  return n;
+}
+
+function updateProgressUI(){
+  const bar = $('progBar');
+  const pending = pendingCount();
+  const copying = copyProgress ? 1 : 0;
+
+  if(copying || pending > 0){
+    // algo acontecendo
+    clearTimeout(pbDoneTimer);
+    bar.classList.remove('done');
+    bar.classList.add('open');
+    if(copyProgress){
+      const pct = copyProgress.total ? (copyProgress.done / copyProgress.total * 100) : 0;
+      $('pbFill').style.width = pct.toFixed(1) + '%';
+      $('pbLabel').textContent = `📥 Copiando · ${pct.toFixed(0)}%`;
+      $('pbName').textContent = `${copyProgress.name}  (${(copyProgress.done/1048576).toFixed(0)} / ${(copyProgress.total/1048576).toFixed(0)} MB)`;
+    }else{
+      $('pbFill').style.width = '0%';
+      $('pbLabel').textContent = '📥 Aguardando fim do upload da produção…';
+      $('pbName').textContent = '';
+    }
+    const parts = [];
+    if(pending)  parts.push(`${pending} aguardando upload`);
+    if(outbox.length) parts.push(`${outbox.length} na caixa`);
+    if(importedCount) parts.push(`${importedCount} copiados nesta sessão`);
+    $('pbStats').textContent = parts.join(' · ');
+  }else if(watching){
+    // acabou tudo — mostra "em dia" por alguns segundos
+    bar.classList.add('done','open');
+    $('pbFill').style.width = '100%';
+    $('pbLabel').textContent = '✓ Todas as cópias em dia';
+    $('pbName').textContent = '';
+    const parts = [];
+    if(outbox.length) parts.push(`${outbox.length} na caixa aguardando você importar`);
+    if(importedCount) parts.push(`${importedCount} copiados nesta sessão`);
+    $('pbStats').textContent = parts.join(' · ') || 'vigiando a pasta…';
+    // mantém visível — some se o auto-import for desligado
+  }else{
+    bar.classList.remove('open','done');
+  }
+}
+
 /* ---- IndexedDB pra lembrar as pastas entre sessões ---- */
 function idb(){
   return new Promise((res, rej)=>{
@@ -1077,6 +1163,7 @@ async function scan(baseline=false){
     aiLog('Erro na varredura: '+e.message, 'err');
   }
   scanning = false;
+  updateProgressUI();
 }
 
 /* ---- copia 1 arquivo e coloca na caixa de entrada (outbox) ---- */
@@ -1106,7 +1193,22 @@ async function importFile(srcFileHandle, file){
     aiLog(`Copiando ${name} (${(file.size/1048576).toFixed(0)} MB)…`, 'info');
     const dest = await destHandle.getFileHandle(finalName, {create:true});
     const writable = await dest.createWritable();
-    await file.stream().pipeTo(writable);
+
+    // stream com contador de bytes pra alimentar a barra de progresso
+    copyProgress = {name: finalName, done: 0, total: file.size};
+    updateProgressUI();
+    const meter = new TransformStream({
+      transform(chunk, controller){
+        copyProgress.done += chunk.byteLength || chunk.length || 0;
+        updateProgressUI();
+        controller.enqueue(chunk);
+      }
+    });
+    await file.stream().pipeThrough(meter).pipeTo(writable);
+    copyProgress = null;
+    importedCount++;
+    updateProgressUI();
+
     aiLog(`✔ Copiado: ${finalName}`, 'ok');
 
     if(!cfg.destPath){
@@ -1225,6 +1327,7 @@ $('btnWatch').onclick = async ()=>{
     clearInterval(aiTimer);
     aiLog('Auto-import desligado.', 'warn');
     updateAIUI();
+    updateProgressUI();
     return;
   }
   if(!aiSupported()){ aiLog('Navegador sem suporte (use Chrome/Edge, página em HTTPS ou localhost).', 'err'); return; }
@@ -1236,9 +1339,10 @@ $('btnWatch').onclick = async ()=>{
   if(!await verifyPermission(destHandle, true)){ aiLog('Permissão negada na pasta de destino.', 'err'); return; }
 
   knownFiles.clear();
+  importedCount = 0;
   const importExisting = $('chkExisting').checked;
   aiLog('Varredura inicial…', 'info');
-  await scan(!importExisting);   // baseline=true ignora o que já existe
+  await scan(!importExisting);
   const total = knownFiles.size;
   aiLog(importExisting
     ? `${total} arquivo(s) encontrados — todos entrarão na fila de importação.`
@@ -1247,6 +1351,7 @@ $('btnWatch').onclick = async ()=>{
   watching = true;
   aiTimer = setInterval(scan, AI_INTERVAL);
   updateAIUI();
+  updateProgressUI();
 };
 
 /* ---- reconecta pastas salvas de sessões anteriores ---- */
