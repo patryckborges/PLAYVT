@@ -537,7 +537,12 @@ const DEFAULT_PCS = {
   'PD5':'10.10.0.105','PD6':'10.10.0.106'
 };
 const LS_KEY = 'vtfinder_cfg';
-const VIDEO_EXT = ['mp4','mov','mxf','avi','wmv','mpg','mpeg','ts','mkv'];
+const MEDIA_EXT = [
+  // vídeo
+  'mp4','mov','mxf','avi','wmv','mpg','mpeg','ts','mkv','m4v','webm',
+  // imagem (ARTE / ILU)
+  'png','jpg','jpeg','gif','bmp','tif','tiff','webp'
+];
 
 let cfg = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
 let PCS = cfg.pcs && Object.keys(cfg.pcs).length ? cfg.pcs : {...DEFAULT_PCS};
@@ -1128,9 +1133,9 @@ async function* walk(dir, prefix=''){
   }
 }
 
-function isVideo(name){
+function isMedia(name){
   const dot = name.lastIndexOf('.');
-  return dot > -1 && VIDEO_EXT.includes(name.slice(dot+1).toLowerCase());
+  return dot > -1 && MEDIA_EXT.includes(name.slice(dot+1).toLowerCase());
 }
 
 async function scan(baseline=false){
@@ -1138,7 +1143,7 @@ async function scan(baseline=false){
   scanning = true;
   try{
     for await (const [rel, handle] of walk(srcHandle)){
-      if(!isVideo(handle.name)) continue;
+      if(!isMedia(handle.name)) continue;
       let f;
       try{ f = await handle.getFile(); }catch(e){ continue; }  // ainda em cópia/lock
       const prev = knownFiles.get(rel);
