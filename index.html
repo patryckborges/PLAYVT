@@ -275,12 +275,12 @@
   }
 
   /* ---------- Outbox de novos arquivos (topo da lista) ---------- */
-  #outbox{background:#1a1408;border-bottom:2px solid var(--amber);display:none}
-  #outbox.open{display:block}
+  #outbox{background:#1a1408;border-bottom:2px solid var(--amber);display:none;flex-direction:column;max-height:45vh}
+  #outbox.open{display:flex}
   #outbox .ob-head{
     display:flex;align-items:center;gap:10px;padding:8px 12px;
     background:#231a0a;font-size:10.5px;font-weight:800;letter-spacing:.16em;
-    color:var(--amber);font-family:var(--mono);
+    color:var(--amber);font-family:var(--mono);flex:0 0 auto;
   }
   #outbox .ob-head .spacer{flex:1}
   #outbox button{
@@ -289,14 +289,30 @@
     cursor:pointer;
   }
   #outbox button:hover{background:#2a2015}
+  #obList{flex:1;overflow-y:auto;overscroll-behavior:contain}
+  #obList::-webkit-scrollbar{width:10px}
+  #obList::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
   #outbox .ob-row{
     display:flex;align-items:center;gap:10px;padding:6px 12px 6px 20px;
     border-top:1px solid #2a2015;
+  }
+  #outbox .ob-row.ob-new{
+    background:linear-gradient(90deg, #1a3050 0%, #1a1408 60%);
+    animation:obPulse 1.6s ease-out;
+  }
+  @keyframes obPulse{
+    0%   {background:#3a5a90}
+    100% {background:linear-gradient(90deg, #1a3050 0%, #1a1408 60%)}
+  }
+  #outbox .ob-new-tag{
+    background:var(--blue);color:#000;font-weight:800;font-size:9px;letter-spacing:.1em;
+    padding:2px 6px;border-radius:3px;flex:0 0 auto;
   }
   #outbox .ob-name{
     flex:1;font-family:var(--mono);font-size:12.5px;color:var(--txt);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   }
+  #outbox .ob-row.ob-new .ob-name{color:#cfe3ff;font-weight:700}
   #outbox .ob-src{
     font-family:var(--mono);font-size:10px;color:var(--dim);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:35%;
@@ -1232,9 +1248,11 @@ async function importFile(srcFileHandle, file){
 
 /* ================= Caixa de entrada (outbox) ================= */
 let outbox = [];   // [{name, path, src}]
+let freshOutbox = new Set();   // paths dos arquivos que chegaram nesta sessão (destacados como NOVO)
 
 function loadOutbox(){
   outbox = (cfg.outbox || {})[cfg.inputKey] || [];
+  // pastas persistidas de sessões antigas não são "novas"
   renderOutbox();
 }
 
@@ -1245,26 +1263,35 @@ function saveOutbox(){
 }
 
 function addToOutbox(entry){
-  // evita duplicar (mesmo caminho já pendente ou já na lista do vMix)
   if(outbox.some(x => x.path === entry.path)) return;
   if(items.some(it => it.path === entry.path)) return;
   outbox.push(entry);
+  freshOutbox.add(entry.path);
   saveOutbox();
   renderOutbox();
   toast(`📥 Novo arquivo na caixa: ${entry.name}`);
+  // scroll até o item recém-adicionado
+  setTimeout(()=>{
+    const list = $('obList');
+    if(list) list.scrollTop = list.scrollHeight;
+  }, 50);
 }
 
 function renderOutbox(){
   const box = $('outbox');
   if(!outbox.length){ box.classList.remove('open'); return; }
   box.classList.add('open');
-  $('obTitle').textContent = `📥 CAIXA DE ENTRADA · ${outbox.length} ARQUIVO${outbox.length>1?'S':''} NOV${outbox.length>1?'OS':'O'}`;
+  const newCount = outbox.filter(e => freshOutbox.has(e.path)).length;
+  $('obTitle').textContent = `📥 CAIXA DE ENTRADA · ${outbox.length} ARQUIVO${outbox.length>1?'S':''}` +
+    (newCount ? ` · ${newCount} NOV${newCount>1?'OS':'O'}` : '');
   const list = $('obList');
   list.innerHTML = '';
   outbox.forEach((entry, i)=>{
+    const isNew = freshOutbox.has(entry.path);
     const row = document.createElement('div');
-    row.className = 'ob-row';
+    row.className = 'ob-row' + (isNew ? ' ob-new' : '');
     row.innerHTML = `
+      ${isNew ? '<span class="ob-new-tag">NOVO</span>' : ''}
       <span class="ob-name" title="${escapeHTML(entry.path)}">${escapeHTML(entry.name)}</span>
       <span class="ob-src" title="${escapeHTML(entry.src||'')}">${escapeHTML(entry.src || '')}</span>
       <button title="Adicionar este VT na lista do vMix">Importar</button>
@@ -1281,6 +1308,7 @@ async function importOne(i){
   try{
     await fn('ListAdd', {Input: cfg.inputKey, Value: entry.path});
     freshNames.add(entry.name);
+    freshOutbox.delete(entry.path);
     outbox.splice(i, 1);
     saveOutbox();
     renderOutbox();
@@ -1294,6 +1322,7 @@ async function importOne(i){
 function dismissOne(i){
   const entry = outbox[i];
   if(!confirm(`Descartar "${entry.name}" da caixa de entrada? (o arquivo continua no disco, só não vai pra lista)`)) return;
+  freshOutbox.delete(entry.path);
   outbox.splice(i, 1);
   saveOutbox();
   renderOutbox();
@@ -1308,6 +1337,7 @@ $('obImportAll').onclick = async ()=>{
     for(const entry of copy){
       await fn('ListAdd', {Input: cfg.inputKey, Value: entry.path});
       freshNames.add(entry.name);
+      freshOutbox.delete(entry.path);
     }
     outbox = [];
     saveOutbox();
@@ -1320,6 +1350,7 @@ $('obImportAll').onclick = async ()=>{
 $('obDismissAll').onclick = ()=>{
   if(!outbox.length) return;
   if(!confirm(`Descartar todos os ${outbox.length} arquivos da caixa? (os arquivos continuam no disco)`)) return;
+  outbox.forEach(e => freshOutbox.delete(e.path));
   outbox = [];
   saveOutbox();
   renderOutbox();
