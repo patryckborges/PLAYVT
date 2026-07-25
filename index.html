@@ -308,6 +308,20 @@
     background:var(--blue);color:#000;font-weight:800;font-size:9px;letter-spacing:.1em;
     padding:2px 6px;border-radius:3px;flex:0 0 auto;
   }
+  #outbox .ob-orient{
+    font-family:var(--mono);font-size:10px;font-weight:800;
+    padding:2px 6px;border-radius:3px;min-width:20px;text-align:center;flex:0 0 auto;
+  }
+  #outbox .ob-orient.orient-H{background:#0e1a2a;color:var(--blue);border:1px solid #2a4258}
+  #outbox .ob-orient.orient-V{background:#1a1030;color:#c79bff;border:1px solid #3d2f58}
+  #outbox .ob-orient.orient-U{background:#231a0a;color:var(--amber);border:1px solid #5a3b1a}
+  #outbox .ob-dims{
+    font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:6px;
+  }
+  #outbox .ob-target{
+    font-family:var(--mono);font-size:10px;color:var(--green);
+    max-width:22%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
   #outbox .ob-name{
     flex:1;font-family:var(--mono);font-size:12.5px;color:var(--txt);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -694,6 +708,8 @@ function fn(name, params={}){
   return fetch(base()+'?'+q.toString(), {cache:'no-store'});
 }
 
+let availableInputs = [];   // [{key, num, title, shortTitle}]
+
 async function loadInputs(){
   const sel = $('inputSel');
   sel.innerHTML = '<option value="">carregando…</option>';
@@ -701,23 +717,29 @@ async function loadInputs(){
     const xml = await apiXML();
     setStatus(true, cfg.pc + ' conectado');
     sel.innerHTML = '';
-    let found = 0;
+    availableInputs = [];
     xml.querySelectorAll('inputs > input').forEach(inp=>{
       const type = inp.getAttribute('type') || '';
       if(type === 'VideoList' || inp.querySelector(':scope > list')){
+        const info = {
+          key: inp.getAttribute('key'),
+          num: inp.getAttribute('number'),
+          title: inp.getAttribute('title') || '',
+          shortTitle: inp.getAttribute('shortTitle') || inp.getAttribute('title') || ''
+        };
+        availableInputs.push(info);
         const o = document.createElement('option');
-        o.value = inp.getAttribute('key');
-        o.textContent = `${inp.getAttribute('number')} · ${inp.getAttribute('shortTitle') || inp.getAttribute('title')}`;
+        o.value = info.key;
+        o.textContent = `${info.num} · ${info.shortTitle}`;
         sel.appendChild(o);
-        found++;
       }
     });
-    if(!found){
+    if(!availableInputs.length){
       sel.innerHTML = '<option value="">nenhuma List encontrada</option>';
       renderEmpty('Nenhum input do tipo <b>List</b> foi encontrado neste vMix.');
       return;
     }
-    if(cfg.inputKey && [...sel.options].some(o=>o.value===cfg.inputKey))
+    if(cfg.inputKey && availableInputs.some(i => i.key === cfg.inputKey))
       sel.value = cfg.inputKey;
     cfg.inputKey = sel.value; save();
     await loadList();
@@ -732,8 +754,23 @@ async function loadInputs(){
   }
 }
 
+/* Encontra a lista pela orientação do arquivo (H/V no shortTitle/title) */
+function pickListByOrientation(orientation){
+  if(!orientation || orientation === 'unknown') return cfg.inputKey;
+  const term = orientation;   // 'horizontal' | 'vertical'
+  const match = availableInputs.find(inp =>
+    norm(inp.shortTitle).includes(term) || norm(inp.title).includes(term)
+  );
+  return match ? match.key : cfg.inputKey;
+}
+
+function inputTitle(key){
+  const info = availableInputs.find(i => i.key === key);
+  return info ? info.shortTitle : '';
+}
+
 $('inputSel').onchange = () => {
-  cfg.inputKey = $('inputSel').value; save(); loadList(); loadOutbox();
+  cfg.inputKey = $('inputSel').value; save(); loadList();
 };
 
 async function loadList(silent=false){
@@ -1226,6 +1263,36 @@ async function scan(baseline=false){
   updateProgressUI();
 }
 
+/* ---- Detecta dimensões (horizontal/vertical) do arquivo ---- */
+async function detectOrientation(file){
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const isVideo = ['mp4','mov','webm','mkv','m4v','ogg','ogv'].includes(ext);
+  const isImage = ['png','jpg','jpeg','gif','bmp','webp'].includes(ext);
+  if(!isVideo && !isImage) return null;   // formato não decodificável no browser
+
+  const url = URL.createObjectURL(file);
+  const timeout = new Promise(res => setTimeout(()=> res(null), 8000));
+  const load = new Promise(res=>{
+    if(isImage){
+      const img = new Image();
+      img.onload  = ()=> res({w: img.naturalWidth, h: img.naturalHeight});
+      img.onerror = ()=> res(null);
+      img.src = url;
+    }else{
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.muted = true;
+      v.onloadedmetadata = ()=> res({w: v.videoWidth, h: v.videoHeight});
+      v.onerror = ()=> res(null);
+      v.src = url;
+    }
+  });
+  const dims = await Promise.race([load, timeout]);
+  URL.revokeObjectURL(url);
+  if(!dims || !dims.w || !dims.h) return null;
+  return {...dims, orientation: dims.w >= dims.h ? 'horizontal' : 'vertical'};
+}
+
 /* ---- copia 1 arquivo e coloca na caixa de entrada (outbox) ---- */
 async function importFile(srcFileHandle, file){
   const name = srcFileHandle.name;
@@ -1271,13 +1338,23 @@ async function importFile(srcFileHandle, file){
 
     aiLog(`✔ Copiado: ${finalName}`, 'ok');
 
+    // detecta orientação lendo o arquivo já copiado (rápido, é local)
+    let dims = null;
+    try{
+      const copiedHandle = await destHandle.getFileHandle(finalName);
+      const copiedFile = await copiedHandle.getFile();
+      dims = await detectOrientation(copiedFile);
+    }catch(e){ /* ignora, orientation = unknown */ }
+    const orientation = dims ? dims.orientation : 'unknown';
+    if(dims) aiLog(`  ↳ ${dims.w}×${dims.h} · ${dims.orientation}`, 'info');
+
     if(!cfg.destPath){
       aiLog('Caminho real do destino não preenchido — o arquivo foi copiado mas NÃO poderá ir pro vMix.', 'err');
       return true;
     }
     const fullPath = cfg.destPath + '\\' + finalName;
-    addToOutbox({name: finalName, path: fullPath, src: srcRel});
-    aiLog(`📥 ${finalName} disponível na caixa de entrada — aguardando operador importar.`, 'info');
+    addToOutbox({name: finalName, path: fullPath, src: srcRel, orientation, w: dims?.w, h: dims?.h});
+    aiLog(`📥 ${finalName} disponível na caixa de entrada.`, 'info');
     return true;
   }catch(e){
     aiLog(`ERRO ao importar ${name}: ${e.message}`, 'err');
@@ -1290,14 +1367,20 @@ let outbox = [];   // [{name, path, src}]
 let freshOutbox = new Set();   // paths dos arquivos que chegaram nesta sessão (destacados como NOVO)
 
 function loadOutbox(){
-  outbox = (cfg.outbox || {})[cfg.inputKey] || [];
-  // pastas persistidas de sessões antigas não são "novas"
+  // migração: se outbox era objeto por inputKey (versão antiga), consolida em array
+  if(cfg.outbox && !Array.isArray(cfg.outbox)){
+    const arrays = Object.values(cfg.outbox).filter(Array.isArray);
+    outbox = arrays.flat();
+    delete cfg.outbox;
+  }else{
+    outbox = cfg.outbox || [];
+  }
+  saveOutbox();
   renderOutbox();
 }
 
 function saveOutbox(){
-  cfg.outbox = cfg.outbox || {};
-  cfg.outbox[cfg.inputKey] = outbox;
+  cfg.outbox = outbox;
   save();
 }
 
@@ -1308,8 +1391,8 @@ function addToOutbox(entry){
   freshOutbox.add(entry.path);
   saveOutbox();
   renderOutbox();
-  toast(`📥 Novo arquivo na caixa: ${entry.name}`);
-  // scroll até o item recém-adicionado
+  const dest = inputTitle(pickListByOrientation(entry.orientation));
+  toast(`📥 Novo na caixa: ${entry.name}${dest ? ' → ' + dest : ''}`);
   setTimeout(()=>{
     const list = $('obList');
     if(list) list.scrollTop = list.scrollHeight;
@@ -1327,14 +1410,23 @@ function renderOutbox(){
   list.innerHTML = '';
   outbox.forEach((entry, i)=>{
     const isNew = freshOutbox.has(entry.path);
+    const targetKey = pickListByOrientation(entry.orientation);
+    const targetTitle = inputTitle(targetKey);
+    const orient = entry.orientation || 'unknown';
+    const orientTag = orient === 'horizontal' ? '<span class="ob-orient orient-H" title="Horizontal">H</span>'
+                    : orient === 'vertical'   ? '<span class="ob-orient orient-V" title="Vertical">V</span>'
+                    :                           '<span class="ob-orient orient-U" title="Não detectado — vai pra lista selecionada">?</span>';
+    const dims = entry.w && entry.h ? ` <span class="ob-dims">${entry.w}×${entry.h}</span>` : '';
     const row = document.createElement('div');
     row.className = 'ob-row' + (isNew ? ' ob-new' : '');
     row.innerHTML = `
       ${isNew ? '<span class="ob-new-tag">NOVO</span>' : ''}
-      <span class="ob-name" title="${escapeHTML(entry.path)}">${escapeHTML(entry.name)}</span>
+      ${orientTag}
+      <span class="ob-name" title="${escapeHTML(entry.path)}">${escapeHTML(entry.name)}${dims}</span>
       <span class="ob-src" title="${escapeHTML(entry.src||'')}">${escapeHTML(entry.src || '')}</span>
-      <button title="Adicionar este VT na lista do vMix">Importar</button>
-      <button class="ob-dismiss" title="Descartar (não importa)">✕</button>`;
+      <span class="ob-target" title="Lista de destino">→ ${escapeHTML(targetTitle || '?')}</span>
+      <button title="Adicionar este arquivo na lista">Importar</button>
+      <button class="ob-dismiss" title="Descartar">✕</button>`;
     row.querySelectorAll('button')[0].onclick = ()=> importOne(i);
     row.querySelector('.ob-dismiss').onclick = ()=> dismissOne(i);
     list.appendChild(row);
@@ -1343,16 +1435,18 @@ function renderOutbox(){
 
 async function importOne(i){
   const entry = outbox[i];
-  if(!cfg.inputKey){ toast('Selecione um input List primeiro.', true); return; }
+  const targetKey = pickListByOrientation(entry.orientation);
+  if(!targetKey){ toast('Selecione um input List primeiro.', true); return; }
   try{
-    await fn('ListAdd', {Input: cfg.inputKey, Value: entry.path});
+    await fn('ListAdd', {Input: targetKey, Value: entry.path});
     freshNames.add(entry.name);
     freshOutbox.delete(entry.path);
     outbox.splice(i, 1);
     saveOutbox();
     renderOutbox();
-    toast(`✔ ${entry.name} adicionado à lista`);
-    await loadList(true);
+    const title = inputTitle(targetKey);
+    toast(`✔ ${entry.name} → ${title}`);
+    if(targetKey === cfg.inputKey) await loadList(true);
   }catch(e){
     toast(`Erro: ${e.message}`, true);
   }
@@ -1369,19 +1463,29 @@ function dismissOne(i){
 
 $('obImportAll').onclick = async ()=>{
   if(!outbox.length) return;
-  if(!cfg.inputKey){ toast('Selecione um input List primeiro.', true); return; }
-  if(!confirm(`Importar todos os ${outbox.length} arquivos pra lista do vMix?`)) return;
+  const grouped = {};
+  outbox.forEach(e => {
+    const k = pickListByOrientation(e.orientation);
+    if(!k) return;
+    (grouped[k] = grouped[k] || []).push(e);
+  });
+  const summary = Object.entries(grouped)
+    .map(([k,arr]) => `${arr.length} → ${inputTitle(k)}`)
+    .join('\n  • ');
+  if(!confirm(`Importar todos os ${outbox.length} arquivos?\n\n  • ${summary}`)) return;
   const copy = [...outbox];
   try{
     for(const entry of copy){
-      await fn('ListAdd', {Input: cfg.inputKey, Value: entry.path});
+      const targetKey = pickListByOrientation(entry.orientation);
+      if(!targetKey) continue;
+      await fn('ListAdd', {Input: targetKey, Value: entry.path});
       freshNames.add(entry.name);
       freshOutbox.delete(entry.path);
     }
     outbox = [];
     saveOutbox();
     renderOutbox();
-    toast(`✔ ${copy.length} arquivo(s) adicionados à lista`);
+    toast(`✔ ${copy.length} arquivo(s) importados`);
     await loadList(true);
   }catch(e){ toast(`Erro: ${e.message}`, true); }
 };
