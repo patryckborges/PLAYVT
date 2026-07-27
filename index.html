@@ -745,9 +745,14 @@ async function apiXML(){
   return new DOMParser().parseFromString(await r.text(), 'text/xml');
 }
 
-function fn(name, params={}){
-  const q = new URLSearchParams({Function:name, ...params});
-  return fetch(base()+'?'+q.toString(), {cache:'no-store'});
+async function fn(name, params={}){
+  let url = base() + '?Function=' + encodeURIComponent(name);
+  for(const [k, v] of Object.entries(params)){
+    url += '&' + encodeURIComponent(k) + '=' + encodeURIComponent(v);
+  }
+  const r = await fetch(url, {cache:'no-store'});
+  if(!r.ok) throw new Error(`vMix API ${r.status} em ${name}`);
+  return r;
 }
 
 let availableInputs = [];   // [{key, num, title, shortTitle}]
@@ -1535,24 +1540,40 @@ $('obImportAll').onclick = async ()=>{
     (grouped[k] = grouped[k] || []).push(e);
   });
   const summary = Object.entries(grouped)
-    .map(([k,arr]) => `${arr.length} → ${inputTitle(k)}`)
-    .join('\n  • ');
-  if(!confirm(`Importar todos os ${outbox.length} arquivos?\n\n  • ${summary}`)) return;
-  const copy = [...outbox];
-  try{
-    for(const entry of copy){
-      const targetKey = pickListByOrientation(entry.orientation);
-      if(!targetKey) continue;
+    .map(([k,arr]) => `  • ${arr.length} → ${inputTitle(k)}`)
+    .join('\n');
+  if(!confirm(`Importar todos os ${outbox.length} arquivos?\n\n${summary}`)) return;
+
+  const succeeded = new Set();
+  const errors = [];
+  for(const entry of [...outbox]){
+    const targetKey = pickListByOrientation(entry.orientation);
+    if(!targetKey){ errors.push(`${entry.name}: nenhuma lista compatível`); continue; }
+    try{
       await fn('ListAdd', {Input: targetKey, Value: entry.path});
       freshNames.add(entry.name);
       freshOutbox.delete(entry.path);
+      succeeded.add(entry.path);
+    }catch(e){
+      errors.push(`${entry.name}: ${e.message}`);
     }
-    outbox = [];
-    saveOutbox();
-    renderOutbox();
-    toast(`✔ ${copy.length} arquivo(s) importados`);
-    await loadList(true);
-  }catch(e){ toast(`Erro: ${e.message}`, true); }
+  }
+  outbox = outbox.filter(o => !succeeded.has(o.path));
+  saveOutbox();
+  renderOutbox();
+  await loadList(true);
+
+  if(errors.length){
+    console.error('Erros no obImportAll:', errors);
+    alert(
+      `Importados: ${succeeded.size} · Falharam: ${errors.length}\n\n` +
+      errors.slice(0,8).join('\n') +
+      (errors.length > 8 ? `\n... e mais ${errors.length-8}` : '') +
+      `\n\nOs itens que falharam continuam na caixa — tente importá-los individualmente.`
+    );
+  }else{
+    toast(`✔ ${succeeded.size} arquivo(s) importados`);
+  }
 };
 
 $('obDismissAll').onclick = ()=>{
@@ -1819,47 +1840,100 @@ $('rotCancel').onclick = ()=> $('rotMask').classList.remove('open');
 $('rotMask').onclick = (e)=>{ if(e.target === $('rotMask')) $('rotMask').classList.remove('open'); };
 
 $('rotApply').onclick = async ()=>{
-  const roteiroPaths = roteiroDraft.filter(r => r.matchPath).map(r => r.matchPath);
-  if(!roteiroPaths.length){ toast('Nenhum VT casado — nada a aplicar.', true); return; }
-  const outboxPaths = new Set(outbox.map(o => o.path));
-  const fromOutbox = roteiroPaths.filter(p => outboxPaths.has(p));
-  const fromList   = roteiroPaths.filter(p => !outboxPaths.has(p));
-  const rest = items.filter(it => !roteiroPaths.includes(it.path)).map(it => it.path);
+  const roteiro = roteiroDraft.filter(r => r.matchPath);
+  if(!roteiro.length){ toast('Nenhuma lauda casada — nada a aplicar.', true); return; }
+
+  const outboxByPath = new Map(outbox.map(o => [o.path, o]));
+  const currentTitle = (availableInputs.find(i => i.key === cfg.inputKey) || {}).shortTitle || '';
+  const currentOrient = norm(currentTitle).includes('vertical') ? 'vertical'
+                      : norm(currentTitle).includes('horizontal') ? 'horizontal' : 'unknown';
+
+  // Enriquece cada match com orientação (da outbox se possível; senão infere pela lista atual)
+  const enriched = roteiro.map(r => {
+    const oe = outboxByPath.get(r.matchPath);
+    const orient = oe && oe.orientation && oe.orientation !== 'unknown'
+      ? oe.orientation
+      : currentOrient !== 'unknown' ? currentOrient : 'horizontal';
+    return {...r, orientation: orient, fromOutbox: !!oe};
+  });
+
+  // Agrupa matches por lista de destino (key)
+  const plans = new Map();   // targetKey -> [matches na ordem]
+  enriched.forEach(r => {
+    const targetKey = pickListByOrientation(r.orientation);
+    if(!targetKey) return;
+    if(!plans.has(targetKey)) plans.set(targetKey, []);
+    plans.get(targetKey).push(r);
+  });
+
+  if(!plans.size){ toast('Não foi possível determinar a lista destino.', true); return; }
+
+  // Resumo da operação
+  const summary = [...plans.entries()].map(([k, arr]) => {
+    const fromOut = arr.filter(r => r.fromOutbox).length;
+    return `  • ${arr.length} → ${inputTitle(k)}` + (fromOut ? ` (${fromOut} da caixa)` : '');
+  }).join('\n');
 
   const ok = confirm(
     `APLICAR ORDEM DO ROTEIRO\n\n` +
-    `A lista do vMix será reescrita:\n` +
-    `  • ${roteiroPaths.length} lauda(s) do roteiro no topo (na ordem exata)\n` +
-    (fromOutbox.length ? `      — ${fromOutbox.length} vindos da CAIXA DE ENTRADA\n` : '') +
-    (fromList.length   ? `      — ${fromList.length} já estavam na lista\n` : '') +
-    `  • ${rest.length} arquivo(s) restantes logo depois\n` +
-    `  • Total: ${roteiroPaths.length + rest.length} itens\n\n` +
-    `⚠ NÃO faça isso com a lista NO AR — a reprodução será interrompida.\n\nContinuar?`
+    `${plans.size} lista(s) serão reescritas com o roteiro no topo:\n${summary}\n\n` +
+    `⚠ NÃO faça isso com as listas NO AR — a reprodução será interrompida.\n\nContinuar?`
   );
   if(!ok) return;
 
-  try{
-    setStatus(true, 'reescrevendo lista…');
-    $('rotMask').classList.remove('open');
-    await fn('ListRemoveAll', {Input: cfg.inputKey});
-    for(const p of [...roteiroPaths, ...rest]){
-      await fn('ListAdd', {Input: cfg.inputKey, Value: p});
-      const name = p.split(/[\\/]/).pop();
-      if(outboxPaths.has(p)) freshNames.add(name);
-    }
-    // remove da caixa de entrada os que foram usados
-    outbox = outbox.filter(o => !outboxPaths.has(o.path) || !roteiroPaths.includes(o.path));
-    saveOutbox();
-    renderOutbox();
+  $('rotMask').classList.remove('open');
+  setStatus(true, 'reescrevendo listas…');
 
-    cfg.roteiro = cfg.roteiro || {};
-    cfg.roteiro[cfg.inputKey] = roteiroPaths;
-    save();
-    toast(`✔ Roteiro aplicado: ${roteiroPaths.length} laudas no topo` +
-          (fromOutbox.length ? ` (${fromOutbox.length} da caixa)` : ''));
-    await loadList();
-  }catch(e){
-    toast('Erro ao aplicar: '+e.message, true);
+  let totalOk = 0, errors = [];
+  const succeededPaths = new Set();
+
+  for(const [targetKey, matches] of plans){
+    const roteiroPaths = matches.map(r => r.matchPath);
+    // Preserva o resto da lista atual se ela é a que estamos reescrevendo
+    let rest = [];
+    if(targetKey === cfg.inputKey){
+      const roteiroSet = new Set(roteiroPaths);
+      rest = items.filter(it => !roteiroSet.has(it.path)).map(it => it.path);
+    }
+    const ordered = [...roteiroPaths, ...rest];
+    try{
+      await fn('ListRemoveAll', {Input: targetKey});
+    }catch(e){
+      errors.push(`ListRemoveAll em "${inputTitle(targetKey)}": ${e.message}`);
+      continue;
+    }
+    for(const p of ordered){
+      try{
+        await fn('ListAdd', {Input: targetKey, Value: p});
+        succeededPaths.add(p);
+        totalOk++;
+        const name = p.split(/[\\/]/).pop();
+        if(outboxByPath.has(p)) freshNames.add(name);
+      }catch(e){
+        errors.push(`ListAdd de "${p.split(/[\\/]/).pop()}" em "${inputTitle(targetKey)}": ${e.message}`);
+      }
+    }
+  }
+
+  // Só remove da outbox os que realmente foram adicionados
+  outbox = outbox.filter(o => !succeededPaths.has(o.path));
+  saveOutbox();
+  renderOutbox();
+  await loadList();
+  updateProgressUI();
+
+  if(errors.length){
+    console.error('Erros no roteiro:', errors);
+    alert(
+      `Roteiro aplicado PARCIALMENTE:\n` +
+      `  ✔ ${totalOk} item(ns) adicionados com sucesso\n` +
+      `  ✕ ${errors.length} erro(s):\n\n` +
+      errors.slice(0, 8).join('\n') +
+      (errors.length > 8 ? `\n... e mais ${errors.length-8}` : '') +
+      `\n\nOs itens com erro continuam na caixa de entrada — tente importá-los individualmente.`
+    );
+  }else{
+    toast(`✔ Roteiro aplicado: ${totalOk} item(ns) em ${plans.size} lista(s)`);
   }
 };
 
