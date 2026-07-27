@@ -505,6 +505,7 @@
     <div class="pathline">
       <button id="btnDest">Escolher…</button>
       <span class="val none" id="destName">—</span>
+      <button id="btnResetRoot" style="border-color:var(--dim);color:var(--dim);padding:4px 8px;font-size:10.5px;display:none" title="Limpar a pasta raiz configurada (se você configurou errado)">↻ raiz</button>
     </div>
   </div>
 
@@ -1193,6 +1194,7 @@ function updateAIUI(){
     $('destName').textContent = '—';
     $('destName').className = 'val none';
   }
+  $('btnResetRoot').style.display = rootHandle ? '' : 'none';
 
   const b = $('btnWatch');
   b.textContent = watching ? '■ DESLIGAR AUTO-IMPORT' : '▶ LIGAR AUTO-IMPORT';
@@ -1201,6 +1203,25 @@ function updateAIUI(){
     ? `<span class="dot ok pulse"></span> auto-import ativo (${srcHandle?srcHandle.name:''})`
     : '';
 }
+
+$('btnResetRoot').onclick = async ()=>{
+  if(!confirm(
+    `Reconfigurar pasta raiz?\n\n` +
+    `A raiz atual é: ${cfg.rootPath || '(não configurada)'}\n\n` +
+    `Ao confirmar, você limpará a configuração e no próximo "Escolher..." o app vai pedir pra selecionar a raiz de novo. Use isso se percebeu que a raiz está errada (ex: caminho gerado não bate com onde os arquivos realmente estão).`
+  )) return;
+  rootHandle = null;
+  destHandle = null;
+  cfg.rootPath = '';
+  cfg.destPath = '';
+  save();
+  try{
+    await idbSet('root', null);
+    await idbSet('dest', null);
+  }catch(e){}
+  aiLog('Raiz e destino limpos — clique em "Escolher…" pra reconfigurar.', 'warn');
+  updateAIUI();
+};
 
 $('btnSrc').onclick = async ()=>{
   try{
@@ -1258,6 +1279,16 @@ $('btnDest').onclick = async ()=>{
             `Isso significa que você escolheu uma pasta errada como raiz. Cancele e comece de novo, selecionando primeiro a pasta do dia dentro de D:\\, e depois a pasta principal que fica direto em D:\\.`
           );
           return;
+        }
+        // Se raiz = destino (mesma pasta), avisar — pode ser configuração errada
+        if(rel.length === 0){
+          const cont = confirm(
+            `⚠ Você selecionou a MESMA pasta como raiz e destino: "${rootPick.name}".\n\n` +
+            `Isso só está correto se "${rootPick.name}" fica DIRETO em D:\\ (ex: D:\\${rootPick.name}).\n\n` +
+            `Se ela está dentro de outras pastas (ex: D:\\CONTEÚDOS\\27.07\\${rootPick.name}), CANCELE e comece de novo — na hora de escolher a raiz, selecione a pasta principal que fica logo dentro do disco D.\n\n` +
+            `A pasta "${rootPick.name}" fica diretamente em D:\\?`
+          );
+          if(!cont) return;
         }
         // salva a raiz — nome dela vira parte do caminho
         rootHandle = rootPick;
@@ -1565,11 +1596,14 @@ $('obImportAll').onclick = async ()=>{
 
   if(errors.length){
     console.error('Erros no obImportAll:', errors);
+    const many500 = errors.filter(e => e.includes('500')).length >= errors.length / 2;
     alert(
       `Importados: ${succeeded.size} · Falharam: ${errors.length}\n\n` +
       errors.slice(0,8).join('\n') +
       (errors.length > 8 ? `\n... e mais ${errors.length-8}` : '') +
-      `\n\nOs itens que falharam continuam na caixa — tente importá-los individualmente.`
+      (many500
+        ? `\n\n⚠ Muitos erros 500 = o vMix não encontra os arquivos no caminho informado.\nProvavelmente a PASTA RAIZ está configurada errada.\nClique em "↻ raiz" ao lado do destino e reconfigure — na 2ª etapa, escolha a pasta que fica DIRETO em D:\\ (ex: CONTEÚDOS), não a mesma pasta do dia.`
+        : `\n\nOs itens que falharam continuam na caixa — tente importá-los individualmente.`)
     );
   }else{
     toast(`✔ ${succeeded.size} arquivo(s) importados`);
