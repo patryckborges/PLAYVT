@@ -436,6 +436,31 @@
   #ipBox .foot .left{margin-right:auto}
   #ipBox button.primary{border-color:var(--green);color:var(--green)}
 
+  /* ---------- Modal de conexão inicial da raiz ---------- */
+  #rootConnMask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:100;align-items:center;justify-content:center}
+  #rootConnMask.open{display:flex}
+  #rootConnBox{
+    background:var(--panel);border:1px solid var(--amber);border-radius:8px;
+    padding:22px 26px;width:min(540px,92vw);
+  }
+  #rootConnBox h3{font-size:12px;letter-spacing:.16em;color:var(--amber);margin-bottom:14px}
+  #rootConnBox p{color:var(--txt);font-size:13px;line-height:1.55;margin-bottom:8px}
+  #rootConnBox p.dim{color:var(--dim);font-size:11.5px}
+  #rootConnBox code{background:#0c1014;padding:2px 7px;border-radius:3px;color:var(--amber);font-family:var(--mono);font-size:11.5px}
+  #rootConnBox .step{
+    background:#0c1014;border-left:3px solid var(--green);padding:8px 12px;margin:12px 0;
+    font-size:12px;color:var(--txt);border-radius:3px;
+  }
+  #rootConnBox .foot{
+    display:flex;gap:10px;justify-content:flex-end;margin-top:18px;padding-top:14px;
+    border-top:1px solid var(--line);
+  }
+  #rootConnBox button.primary{
+    background:#0e2418;border-color:var(--green);color:var(--green);
+    padding:8px 16px;font-weight:700;
+  }
+  #rootConnBox button.primary:hover{background:#153020}
+
   /* ---------- Modal de raiz ---------- */
   #rootMask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:center;justify-content:center}
   #rootMask.open{display:flex}
@@ -556,6 +581,23 @@
   <span class="spacer"></span>
   <label class="chk"><input type="checkbox" id="autoRef" checked> auto-atualizar (5s)</label>
 </footer>
+
+<div id="rootConnMask">
+  <div id="rootConnBox">
+    <h3>✔ PASSO 1 DE 2 — PASTA DO DIA SELECIONADA</h3>
+    <p id="rcSelected"></p>
+    <p class="dim">Falta só uma etapa, feita <b>uma única vez</b>: conceder ao app o acesso à sua pasta raiz no <code>D:\</code>.</p>
+    <div class="step">
+      <b>PASSO 2 DE 2:</b> ao clicar em <b>Conectar pasta raiz</b>, um seletor vai abrir.
+      Navegue até <code>D:\</code> e selecione a <b>pasta principal</b> onde você guarda tudo — a pasta que fica logo dentro do disco D e contém a estrutura interna que você usa (ex: <code>CONTEÚDOS</code>, <code>CONTEUDO</code>, ou qualquer nome).
+    </div>
+    <p class="dim">Depois disso, todos os dias é só clicar em "Escolher…" e selecionar a pasta do dia — em qualquer profundidade — o app cuida do resto.</p>
+    <div class="foot">
+      <button id="rcCancel">Cancelar</button>
+      <button id="rcConnect" class="primary">Conectar pasta raiz…</button>
+    </div>
+  </div>
+</div>
 
 <div id="ipMask">
   <div id="ipBox">
@@ -1025,7 +1067,9 @@ let scanning = false;
 
 const AI_INTERVAL = 10000;    // 10s
 const STABLE_SCANS = 2;       // nº de varreduras com tamanho igual antes de copiar
-const ROOT_PATH = 'D:\\CONTEÚDOS';   // pasta raiz fixa da CazéTV — o operador nunca salva fora daqui
+// A raiz do conteúdo fica sempre em D:\, mas o nome da pasta varia por operador.
+// O app não força um nome específico — aceita qualquer pasta que o operador escolher.
+const ROOT_DRIVE = 'D:\\';
 
 /* ---- Estado de progresso das cópias ---- */
 let copyProgress = null;      // {name, done, total} enquanto está copiando
@@ -1162,60 +1206,81 @@ $('btnSrc').onclick = async ()=>{
   }catch(e){ /* cancelado */ }
 };
 
-/* ---- Garante que rootHandle está conectada (só na 1ª vez) ---- */
-async function ensureRoot(){
-  if(rootHandle){
-    // reobter permissão se preciso
-    if(await verifyPermission(rootHandle, true)) return true;
-    rootHandle = null;
-  }
-  const rootName = ROOT_PATH.split(/[\\/]/).pop();
-  alert(
-    `Primeira vez usando o app neste PC.\n\n` +
-    `O navegador precisa que você conceda acesso à pasta "${rootName}" uma única vez.\n\n` +
-    `Ao clicar OK, um seletor de pastas vai abrir. Navegue até "${ROOT_PATH}" e selecione a pasta "${rootName}".\n` +
-    `Depois disso, você nunca mais precisará fazer isso.`
-  );
-  try{
-    const h = await showDirectoryPicker({mode:'readwrite'});
-    if(norm(h.name) !== norm(rootName)){
-      alert(
-        `A pasta selecionada ("${h.name}") não é "${rootName}".\n\n` +
-        `Provavelmente você navegou muito fundo no seletor. Ao clicar em "Escolher…" de novo, ` +
-        `selecione a pasta chamada "${rootName}" — a que fica direto em D:\\ — e não uma subpasta.`
-      );
-      return false;
-    }
-    rootHandle = h;
-    cfg.rootPath = ROOT_PATH;
-    save();
-    await idbSet('root', h);
-    aiLog(`✔ Acesso à raiz ${ROOT_PATH} concedido.`, 'ok');
-    return true;
-  }catch(e){ return false; }
+/* ---- Modal de conexão da raiz (primeira vez) ---- */
+let rcOnConnect = null;
+
+function openRootConnModal(destName, onConnect){
+  $('rcSelected').innerHTML = `Você selecionou <b style="color:var(--amber)">${escapeHTML(destName)}</b> como pasta de destino do dia.`;
+  rcOnConnect = onConnect;
+  $('rootConnMask').classList.add('open');
 }
+function closeRootConnModal(){
+  $('rootConnMask').classList.remove('open');
+  rcOnConnect = null;
+}
+
+$('rcCancel').onclick = closeRootConnModal;
+$('rootConnMask').onclick = (e)=>{ if(e.target === $('rootConnMask')) closeRootConnModal(); };
+$('rcConnect').onclick = async ()=>{
+  if(rcOnConnect) await rcOnConnect();
+};
 
 /* ---- Destino: só selecionar, o app deriva o caminho ---- */
 $('btnDest').onclick = async ()=>{
-  if(!await ensureRoot()) return;
   try{
+    // 1) Abre o seletor pra pasta do dia (usa startIn se já temos root)
     const opts = {mode:'readwrite'};
-    try{ opts.startIn = rootHandle; }catch(e){}
-    const h = await showDirectoryPicker(opts);
-    const rel = await rootHandle.resolve(h);
-    if(!rel){
-      aiLog(`A pasta "${h.name}" não está dentro de ${ROOT_PATH}. Escolha uma subpasta dentro dessa raiz.`, 'err');
-      alert(`A pasta "${h.name}" que você escolheu não está dentro de ${ROOT_PATH}.\n\nEscolha uma subpasta dentro dessa raiz.`);
+    if(rootHandle){
+      try{ opts.startIn = rootHandle; }catch(e){}
+    }
+    const pickedDest = await showDirectoryPicker(opts);
+
+    // 2) Se já temos a raiz, resolve o caminho e pronto
+    if(rootHandle){
+      await commitDest(pickedDest);
       return;
     }
-    destHandle = h;
-    cfg.destPath = ROOT_PATH + (rel.length ? '\\' + rel.join('\\') : '');
-    save();
-    await idbSet('dest', h);
-    aiLog(`✔ Destino: ${cfg.destPath}`, 'ok');
-    updateAIUI();
-  }catch(e){ /* cancelado */ }
+
+    // 3) Primeira vez: pede raiz num modal customizado (não usa alert)
+    openRootConnModal(pickedDest.name, async ()=>{
+      try{
+        const rootPick = await showDirectoryPicker({mode:'readwrite'});
+        // valida que a pasta do dia está DENTRO da raiz escolhida
+        const rel = await rootPick.resolve(pickedDest);
+        if(!rel){
+          alert(
+            `A pasta que você acabou de escolher como raiz ("${rootPick.name}") NÃO contém a pasta do dia ("${pickedDest.name}").\n\n` +
+            `Isso significa que você escolheu uma pasta errada como raiz. Cancele e comece de novo, selecionando primeiro a pasta do dia dentro de D:\\, e depois a pasta principal que fica direto em D:\\.`
+          );
+          return;
+        }
+        // salva a raiz — nome dela vira parte do caminho
+        rootHandle = rootPick;
+        cfg.rootPath = ROOT_DRIVE + rootPick.name;
+        save();
+        await idbSet('root', rootPick);
+        aiLog(`✔ Raiz configurada: ${cfg.rootPath}`, 'ok');
+        closeRootConnModal();
+        await commitDest(pickedDest);
+      }catch(e){ /* usuário cancelou o seletor */ }
+    });
+  }catch(e){ /* usuário cancelou */ }
 };
+
+async function commitDest(pickedDest){
+  const rel = await rootHandle.resolve(pickedDest);
+  if(!rel){
+    aiLog(`A pasta "${pickedDest.name}" não está dentro de ${cfg.rootPath}. Escolha uma dentro da raiz.`, 'err');
+    alert(`A pasta "${pickedDest.name}" não está dentro de ${cfg.rootPath}.\n\nEscolha uma pasta dentro da raiz.`);
+    return;
+  }
+  destHandle = pickedDest;
+  cfg.destPath = cfg.rootPath + (rel.length ? '\\' + rel.join('\\') : '');
+  save();
+  await idbSet('dest', pickedDest);
+  aiLog(`✔ Destino: ${cfg.destPath}`, 'ok');
+  updateAIUI();
+}
 
 /* ---- varredura recursiva da origem ---- */
 async function* walk(dir, prefix=''){
