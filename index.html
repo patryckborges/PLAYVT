@@ -811,10 +811,22 @@ function orientOf(entry){
 function pickListByOrientation(orientation){
   if(!orientation || orientation === 'unknown') return null;   // sem tamanho = operador escolhe
   const term = orientation;   // 'horizontal' | 'vertical'
-  const match = availableInputs.find(inp =>
-    norm(inp.shortTitle).includes(term) || norm(inp.title).includes(term)
-  );
-  return match ? match.key : cfg.inputKey;
+  const wanted = 'conteudo ' + term;
+  const clean = t => norm(t).replace(/[^a-z0-9]+/g,' ').trim();
+  // Candidatas: listas com "horizontal"/"vertical" no nome.
+  // Prioridade: nome EXATO "CONTEÚDO VERTICAL" > nome com menos palavras extras
+  // (assim "FUNDO CONTEÚDO VERTICAL" nunca ganha de "CONTEÚDO VERTICAL").
+  const scored = availableInputs
+    .map(inp => {
+      const names = [clean(inp.shortTitle), clean(inp.title)];
+      if(!names.some(n => n.split(' ').includes(term))) return null;
+      const exact = names.includes(wanted);
+      const extra = Math.min(...names.filter(Boolean).map(n => n.split(' ').length));
+      return {inp, score: exact ? -1 : extra};
+    })
+    .filter(Boolean)
+    .sort((a,b)=> a.score - b.score || (+a.inp.num) - (+b.inp.num));
+  return scored.length ? scored[0].inp.key : null;
 }
 
 function inputTitle(key){
