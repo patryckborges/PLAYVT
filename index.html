@@ -109,7 +109,7 @@
   #listWrap::-webkit-scrollbar-thumb,#aiLog::-webkit-scrollbar-thumb{background:var(--line);border-radius:5px}
   .row{
     display:flex;align-items:center;gap:10px;
-    padding:8px 12px;border-bottom:1px solid #141a20;cursor:pointer;user-select:none;
+    padding:8px 12px;border-bottom:1px solid #141a20;cursor:default;
   }
   .row:hover{background:var(--panel2)}
   .row.kbd-focus{outline:1px solid var(--amber);outline-offset:-1px;background:var(--panel2)}
@@ -486,14 +486,14 @@
     <option value="">— carregar inputs —</option>
   </select>
   <button id="btnRefresh" title="Recarregar lista">⟳ Atualizar</button>
-  <button id="btnAI" title="Copiar automaticamente vídeos da produção para o disco local e adicionar na lista">📥 Auto-Import</button>
+  <button id="btnAI" title="Mostrar/ocultar o painel de pastas">📁 Pastas</button>
   <button id="btnRoteiro" title="Importar PDF do roteiro e ordenar os VTs pela ordem do programa">📄 Roteiro</button>
   <button id="btnIPs" title="Editar nomes e IPs das máquinas">⚙ IPs</button>
   <span id="status"><span id="dot" class="dot"></span><span id="statusTxt">desconectado</span></span>
 </header>
 
 <!-- ================= AUTO-IMPORT ================= -->
-<div id="aiPanel">
+<div id="aiPanel" class="open">
   <div class="grid">
     <span class="lbl">PASTA DA PRODUÇÃO</span>
     <div class="pathline">
@@ -519,15 +519,14 @@
 </div>
 
 <div class="searchbar">
-  <input id="search" type="text" placeholder="Digite para buscar o VT…  (ex: gol, entrevista, vinheta)" autocomplete="off" spellcheck="false">
+  <input id="search" type="text" placeholder="Conferir se um arquivo já está na lista…  (ex: gol, neymar, estatísticas)" autocomplete="off" spellcheck="false">
   <select id="sortSel" title="Ordenação (apenas visual)">
     <option value="vmix">Ordem do vMix</option>
-    <option value="roteiro">Ordem do Roteiro</option>
     <option value="az">Nome A→Z</option>
     <option value="za">Nome Z→A</option>
     <option value="ext">Tipo de arquivo</option>
   </select>
-  <span class="hint"><kbd>/</kbd> busca &nbsp;<kbd>↑↓</kbd> navega &nbsp;<kbd>Enter</kbd> seleciona</span>
+  <span class="hint"><kbd>/</kbd> busca &nbsp;<kbd>↑↓</kbd> pula entre resultados &nbsp;<kbd>Esc</kbd> limpa</span>
 </div>
 
 <div id="progBar">
@@ -563,17 +562,6 @@
       <button id="rotApply" class="primary">Aplicar ordem do roteiro</button>
     </div>
   </div>
-</div>
-
-<div id="ctrlBar">
-  <button id="btnRestart" title="Reiniciar item atual">⏮</button>
-  <button id="btnPlayPause" title="Reproduzir / Pausar">▶</button>
-  <button id="btnPrev" title="Item anterior">◀</button>
-  <button id="btnNext" title="Próximo item">▶▶</button>
-  <span class="sep"></span>
-  <button id="btnAutoNext" class="vbtn" title="Reproduzir automaticamente o próximo item da lista">AUTO NEXT</button>
-  <button id="btnAutoFirst" class="vbtn" title="Sempre voltar ao primeiro item ao transicionar pro output">AUTO FIRST</button>
-  <button id="btnLoop" class="vbtn" title="Recomeçar a lista quando chegar ao fim">LOOP</button>
 </div>
 
 <footer>
@@ -830,10 +818,6 @@ async function loadList(silent=false){
                   .find(i => i.getAttribute('key') === cfg.inputKey);
     if(!inp){ if(!silent) toast('Input não encontrado — recarregando inputs', true); loadInputs(); return; }
 
-    playState = inp.getAttribute('state') || '';
-    loopOn = (inp.getAttribute('loop') || '').toLowerCase() === 'true';
-    updateCtrlUI();
-
     const nodes = inp.querySelectorAll(':scope > list > item');
     items = [...nodes].map((n, i)=>{
       const path = n.textContent.trim();
@@ -916,18 +900,13 @@ function render(){
   view.forEach((it, vi)=>{
     const row = document.createElement('div');
     row.className = 'row'
-      + (it.selected ? ' on-vmix' : '')
       + (it.match ? ' match' : '')
       + (it.fresh ? ' fresh' : '')
-      + (vi === kbdPos ? ' kbd-focus' : '')
-      + (!it.enabled ? ' hidden-item' : '');
+      + (vi === kbdPos ? ' kbd-focus' : '');
     row.innerHTML = `
-      <span class="cb${it.enabled ? ' on' : ''}" title="Estado no vMix: ${it.enabled ? 'marcado' : 'desmarcado'}"></span>
       <span class="idx">${String(it.idx).padStart(3,'0')}</span>
       <span class="name" title="${escapeHTML(it.path)}">${highlight(it.name, t)}</span>
-      ${it.selected ? '<span class="tag-sel">NO AR</span>' : ''}
       <span class="ext ${it.ext}">${it.ext.toUpperCase()||'—'}</span>`;
-    row.onclick = ()=> selectItem(it);
     frag.appendChild(row);
   });
   wrap.appendChild(frag);
@@ -941,72 +920,7 @@ function renderEmpty(html){
   $('listWrap').innerHTML = `<div id="empty">${html}</div>`;
 }
 
-/* ================= Ações ================= */
-async function selectItem(it){
-  try{
-    await fn('SelectIndex', {Input: cfg.inputKey, Value: it.idx});
-    toast(`▶ Selecionado no vMix: ${it.name} (item ${it.idx})`);
-    items.forEach(x=> x.selected = (x === it));
-    render();
-  }catch(e){
-    toast('Falha ao selecionar: '+e.message, true);
-  }
-}
-
 $('btnRefresh').onclick = ()=> loadList();
-
-/* ================= Barra de controle (estilo vMix) ================= */
-let playState = '';   // Running / Paused / Completed
-let loopOn = false;
-
-// Auto Next / Auto First: o vMix não expõe o estado desses botões no XML,
-// então o app guarda o estado por lista (padrão do vMix: Auto Next ligado,
-// Auto First desligado) e envia On/Off explícito pra ficarem sincronizados.
-function flags(){
-  cfg.listFlags = cfg.listFlags || {};
-  if(!cfg.listFlags[cfg.inputKey]) cfg.listFlags[cfg.inputKey] = {an:true, af:false};
-  return cfg.listFlags[cfg.inputKey];
-}
-
-function updateCtrlUI(){
-  const f = cfg.inputKey ? flags() : {an:true, af:false};
-  $('btnLoop').classList.toggle('on', loopOn);
-  $('btnAutoNext').classList.toggle('on', f.an);
-  $('btnAutoFirst').classList.toggle('on', f.af);
-  const running = playState === 'Running';
-  $('btnPlayPause').textContent = running ? '❚❚' : '▶';
-  $('btnPlayPause').title = running ? 'Pausar' : 'Reproduzir';
-}
-
-async function ctrl(fname, refreshDelay=300){
-  if(!cfg.inputKey) return;
-  try{
-    await fn(fname, {Input: cfg.inputKey});
-    if(refreshDelay) setTimeout(()=> loadList(true), refreshDelay);
-  }catch(e){ toast('Falha: '+e.message, true); }
-}
-
-$('btnPlayPause').onclick = ()=> ctrl('PlayPause');
-$('btnRestart').onclick   = ()=> ctrl('Restart');
-$('btnPrev').onclick      = ()=> ctrl('PreviousItem');
-$('btnNext').onclick      = ()=> ctrl('NextItem');
-$('btnLoop').onclick      = ()=> ctrl('Loop');   // estado real vem do XML no refresh
-
-$('btnAutoNext').onclick = async ()=>{
-  if(!cfg.inputKey) return;
-  const f = flags(); f.an = !f.an; save();
-  await fn(f.an ? 'AutoPlayNextOn' : 'AutoPlayNextOff', {Input: cfg.inputKey});
-  toast('Auto Next ' + (f.an ? 'LIGADO' : 'DESLIGADO'));
-  updateCtrlUI();
-};
-
-$('btnAutoFirst').onclick = async ()=>{
-  if(!cfg.inputKey) return;
-  const f = flags(); f.af = !f.af; save();
-  await fn(f.af ? 'AutoPlayFirstOn' : 'AutoPlayFirstOff', {Input: cfg.inputKey});
-  toast('Auto First ' + (f.af ? 'LIGADO' : 'DESLIGADO'));
-  updateCtrlUI();
-};
 
 /* ================= Teclado ================= */
 document.addEventListener('keydown', e=>{
@@ -1016,7 +930,7 @@ document.addEventListener('keydown', e=>{
   if(e.key === 'Escape' && inSearch){ $('search').value=''; applyFilter(); return; }
   if(inField && !inSearch) return;
 
-  if(['ArrowDown','ArrowUp','Enter'].includes(e.key)){
+  if(['ArrowDown','ArrowUp'].includes(e.key)){
     if(!view.length) return;
     const searching = terms().length > 0;
     const matchIdxs = searching ? view.map((it,i)=> it.match ? i : -1).filter(i=>i>-1) : null;
@@ -1039,7 +953,6 @@ document.addEventListener('keydown', e=>{
         kbdPos = Math.max(kbdPos-1, 0);
       }
     }
-    if(e.key==='Enter'){ e.preventDefault(); if(kbdPos>-1) selectItem(view[kbdPos]); return; }
     render();
     const el = document.querySelectorAll('.row')[kbdPos];
     if(el) el.scrollIntoView({block:'nearest'});
@@ -1914,6 +1827,24 @@ $('rotApply').onclick = async ()=>{
     `⚠ NÃO faça isso com as listas NO AR — a reprodução será interrompida.\n\nContinuar?`
   );
   if(!ok) return;
+
+  // Trava de segurança: não reescreve lista que esteja tocando
+  try{
+    const xml = await apiXML();
+    const playing = [...plans.keys()].filter(k=>{
+      const node = [...xml.querySelectorAll('inputs > input')].find(i => i.getAttribute('key') === k);
+      return node && node.getAttribute('state') === 'Running';
+    });
+    if(playing.length){
+      alert(
+        `⛔ Não é possível aplicar o roteiro agora.\n\n` +
+        `Esta(s) lista(s) estão tocando no vMix:\n  • ${playing.map(inputTitle).join('\n  • ')}\n\n` +
+        `Reescrever a lista interromperia o vídeo. Com a transmissão em andamento, use o botão "Importar" ` +
+        `da caixa de entrada — ele só acrescenta no fim da lista, sem mexer no que já está lá.`
+      );
+      return;
+    }
+  }catch(e){ /* sem conexão: segue e o erro aparece no ListRemoveAll */ }
 
   $('rotMask').classList.remove('open');
   setStatus(true, 'reescrevendo listas…');
