@@ -277,8 +277,27 @@
   }
 
   /* ---------- Outbox de novos arquivos (topo da lista) ---------- */
-  #outbox{background:#1a1408;border-bottom:2px solid var(--amber);display:none;flex-direction:column;max-height:45vh}
-  #outbox.open{display:flex}
+  /* ---------- Layout em duas colunas ---------- */
+  #cols{flex:1;display:flex;min-height:0}
+  #cols .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column}
+  #colLeft{border-right:2px solid var(--line)}
+  #colRight .col-head{
+    display:flex;align-items:center;gap:10px;padding:8px 12px;flex:0 0 auto;
+    background:#0e2418;border-bottom:2px solid var(--green);
+    font-size:10.5px;font-weight:800;letter-spacing:.16em;color:var(--green);font-family:var(--mono);
+  }
+  #colRight .col-head .spacer{flex:1}
+  #colRight .col-head .hint{letter-spacing:0;font-weight:400;font-family:'Segoe UI',sans-serif}
+  #colRight .searchbar{padding:8px 10px}
+  #colRight .searchbar input{font-size:14px;padding:8px 10px}
+  #colRight .searchbar select{padding:8px 6px}
+  @media (max-width: 900px){
+    #cols{flex-direction:column}
+    #colLeft{border-right:none;border-bottom:2px solid var(--line)}
+  }
+  .ob-empty{padding:40px 20px;text-align:center;color:var(--dim);font-size:12.5px;line-height:1.7}
+
+  #outbox{background:#1a1408;display:flex;flex-direction:column;flex:1;min-height:0}
   #outbox .ob-head{
     display:flex;align-items:center;gap:10px;padding:8px 12px;
     background:#231a0a;font-size:10.5px;font-weight:800;letter-spacing:.16em;
@@ -331,7 +350,7 @@
   #outbox .ob-row.ob-new .ob-name{color:#cfe3ff;font-weight:700}
   #outbox .ob-src{
     font-family:var(--mono);font-size:10px;color:var(--dim);
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:35%;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:25%;
   }
   #outbox .ob-dismiss{
     background:transparent;border:none;color:var(--dim);cursor:pointer;
@@ -521,17 +540,6 @@
   <div id="aiLog"><span class="info">Escolha a pasta da produção e a pasta de destino do dia — depois ligue o auto-import.</span></div>
 </div>
 
-<div class="searchbar">
-  <input id="search" type="text" placeholder="Conferir se um arquivo já está na lista…  (ex: gol, neymar, estatísticas)" autocomplete="off" spellcheck="false">
-  <select id="sortSel" title="Ordenação (apenas visual)">
-    <option value="vmix">Ordem do vMix</option>
-    <option value="az">Nome A→Z</option>
-    <option value="za">Nome Z→A</option>
-    <option value="ext">Tipo de arquivo</option>
-  </select>
-  <span class="hint"><kbd>/</kbd> busca &nbsp;<kbd>↑↓</kbd> pula entre resultados &nbsp;<kbd>Esc</kbd> limpa</span>
-</div>
-
 <div id="progBar">
   <div class="pb-head">
     <span id="pbLabel">Copiando…</span>
@@ -541,17 +549,39 @@
   <div class="pb-name" id="pbName"></div>
 </div>
 
-<div id="outbox">
-  <div class="ob-head">
-    <span id="obTitle">CAIXA DE ENTRADA</span>
-    <span class="spacer"></span>
-    <button id="obImportAll">Importar todos</button>
-    <button id="obDismissAll" style="border-color:var(--dim);color:var(--dim)">Descartar todos</button>
-  </div>
-  <div id="obList"></div>
-</div>
+<div id="cols">
+  <!-- ESQUERDA: o que ainda pode ser importado -->
+  <section id="colLeft" class="col">
+    <div id="outbox">
+      <div class="ob-head">
+        <span id="obTitle">📥 PARA IMPORTAR</span>
+        <span class="spacer"></span>
+        <button id="obImportAll">Importar todos</button>
+        <button id="obDismissAll" style="border-color:var(--dim);color:var(--dim)">Descartar todos</button>
+      </div>
+      <div id="obList"></div>
+    </div>
+  </section>
 
-<div id="listWrap"></div>
+  <!-- DIREITA: o que já está no vMix -->
+  <section id="colRight" class="col">
+    <div class="col-head">
+      <span id="vmixTitle">✔ JÁ NO vMIX</span>
+      <span class="spacer"></span>
+      <span class="hint"><kbd>/</kbd> busca &nbsp;<kbd>↑↓</kbd> resultados &nbsp;<kbd>Esc</kbd> limpa</span>
+    </div>
+    <div class="searchbar">
+      <input id="search" type="text" placeholder="Conferir se um arquivo já está na lista…" autocomplete="off" spellcheck="false">
+      <select id="sortSel" title="Ordenação (apenas visual)">
+        <option value="vmix">Ordem do vMix</option>
+        <option value="az">Nome A→Z</option>
+        <option value="za">Nome Z→A</option>
+        <option value="ext">Tipo de arquivo</option>
+      </select>
+    </div>
+    <div id="listWrap"></div>
+  </section>
+</div>
 
 <div id="rotMask">
   <div id="rotBox">
@@ -901,7 +931,7 @@ function applyFilter(){
     const firstMatch = view.findIndex(it => it.match);
     kbdPos = firstMatch > -1 ? firstMatch : -1;
   }else{
-    kbdPos = view.length ? 0 : -1;
+    kbdPos = -1;   // sem busca, nada destacado
   }
   render();
   // scroll pro primeiro match ao digitar
@@ -923,7 +953,13 @@ function highlight(name, t){
 }
 function escapeHTML(s){ return s.replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+function updateVmixTitle(){
+  const t = (typeof inputTitle === 'function' && cfg.inputKey) ? inputTitle(cfg.inputKey) : '';
+  $('vmixTitle').textContent = `✔ JÁ NO vMIX${t ? ' · ' + t : ''} · ${items.length}`;
+}
+
 function render(){
+  updateVmixTitle();
   const wrap = $('listWrap');
   const t = terms();
   if(!view.length){
@@ -1162,6 +1198,7 @@ function updateAIUI(){
   $('aiFootStatus').innerHTML = watching
     ? `<span class="dot ok pulse"></span> auto-import ativo (${srcHandle?srcHandle.name:''})`
     : '';
+  if(typeof renderOutbox === 'function') renderOutbox();
 }
 
 $('btnResetRoot').onclick = async ()=>{
@@ -1478,10 +1515,14 @@ function addToOutbox(entry){
 
 function renderOutbox(){
   const box = $('outbox');
-  if(!outbox.length){ box.classList.remove('open'); return; }
-  box.classList.add('open');
+  if(!outbox.length){
+    $('obTitle').textContent = '📥 PARA IMPORTAR · 0';
+    $('obList').innerHTML = `<div class="ob-empty">Nada novo esperando importação.<br>
+      ${watching ? 'Vigiando a pasta da produção — arquivos novos aparecem aqui.' : 'Ligue o auto-import no painel de pastas pra começar a copiar.'}</div>`;
+    return;
+  }
   const newCount = outbox.filter(e => freshOutbox.has(e.path)).length;
-  $('obTitle').textContent = `📥 CAIXA DE ENTRADA · ${outbox.length} ARQUIVO${outbox.length>1?'S':''}` +
+  $('obTitle').textContent = `📥 PARA IMPORTAR · ${outbox.length}` +
     (newCount ? ` · ${newCount} NOV${newCount>1?'OS':'O'}` : '');
   const list = $('obList');
   list.innerHTML = '';
@@ -1489,7 +1530,9 @@ function renderOutbox(){
     const isNew = freshOutbox.has(entry.path);
     const orient = orientOf(entry);
     const targetKey = pickListByOrientation(orient);
-    const targetTitle = targetKey ? inputTitle(targetKey) : 'clique em ? pra escolher';
+    const targetTitle = targetKey ? inputTitle(targetKey)
+                      : orient === 'unknown' ? 'clique em ? pra escolher'
+                      : `lista ${orient} não encontrada`;
     const manualMark = entry.manual ? ' ✎' : '';
     const orientTag = orient === 'horizontal' ? `<span class="ob-orient orient-H" title="Horizontal (clique pra trocar)">H${manualMark}</span>`
                     : orient === 'vertical'   ? `<span class="ob-orient orient-V" title="Vertical (clique pra trocar)">V${manualMark}</span>`
