@@ -531,13 +531,13 @@
   </div>
 
   <div class="actions">
-    <button id="btnWatch">▶ LIGAR AUTO-IMPORT</button>
+    <button id="btnWatch">▶ LIGAR AUTO-VERIFICAR</button>
     <button id="btnScanNow" title="Varrer a pasta da produção agora, sem esperar os 10s">⟳ Verificar agora</button>
     <label class="chk"><input type="checkbox" id="chkExisting" checked> importar também o que JÁ está na pasta</label>
     <span class="hint">verifica a cada 10s · inclui subpastas · espera o upload do produtor terminar</span>
   </div>
 
-  <div id="aiLog"><span class="info">Escolha a pasta da produção e a pasta de destino do dia — depois ligue o auto-import.</span></div>
+  <div id="aiLog"><span class="info">Escolha a pasta da produção e a pasta de destino do dia — depois ligue o auto-verificar.</span></div>
 </div>
 
 <div id="progBar">
@@ -1112,14 +1112,14 @@ function updateProgressUI(){
     if(outbox.length) parts.push(`${outbox.length} na caixa aguardando você importar`);
     if(importedCount) parts.push(`${importedCount} copiados nesta sessão`);
     $('pbStats').textContent = parts.join(' · ') || 'vigiando a pasta…';
-    // mantém visível — some se o auto-import for desligado
+    // mantém visível — some se o auto-verificar for desligado
   }else if(srcHandle || destHandle){
     // pastas configuradas, mas ninguém vigiando: deixar isso bem visível
     bar.classList.remove('done');
     bar.classList.add('open','off');
     $('pbFill').style.width = '0%';
-    $('pbLabel').textContent = '⚠ AUTO-IMPORT DESLIGADO — arquivos novos da produção NÃO estão sendo copiados';
-    $('pbName').textContent = 'Clique em "▶ LIGAR AUTO-IMPORT" no painel de pastas.';
+    $('pbLabel').textContent = '⚠ AUTO-VERIFICAR DESLIGADO — arquivos novos da produção NÃO estão sendo copiados';
+    $('pbName').textContent = 'Clique em "▶ LIGAR AUTO-VERIFICAR" no painel de pastas.';
     $('pbStats').textContent = '';
   }else{
     bar.classList.remove('open','done','off');
@@ -1193,10 +1193,10 @@ function updateAIUI(){
   $('btnResetRoot').style.display = rootHandle ? '' : 'none';
 
   const b = $('btnWatch');
-  b.textContent = watching ? '■ DESLIGAR AUTO-IMPORT' : '▶ LIGAR AUTO-IMPORT';
+  b.textContent = watching ? '■ DESLIGAR AUTO-VERIFICAR' : '▶ LIGAR AUTO-VERIFICAR';
   b.className = watching ? 'toggle-on' : '';
   $('aiFootStatus').innerHTML = watching
-    ? `<span class="dot ok pulse"></span> auto-import ativo (${srcHandle?srcHandle.name:''})`
+    ? `<span class="dot ok pulse"></span> auto-verificar ativo (${srcHandle?srcHandle.name:''})`
     : '';
   if(typeof renderOutbox === 'function') renderOutbox();
 }
@@ -1313,6 +1313,7 @@ async function commitDest(pickedDest){
   await idbSet('dest', pickedDest);
   aiLog(`✔ Destino: ${cfg.destPath}`, 'ok');
   purgeStaleOutbox();
+  await refreshUnknownDims();
   if(watching){
     knownFiles.clear();
     aiLog('Destino mudou — vou reavaliar todos os arquivos da produção pra essa pasta nova.', 'info');
@@ -1372,12 +1373,98 @@ async function scan(baseline=false){
   updateProgressUI();
 }
 
+/* ===== Lê largura/altura do CABEÇALHO do arquivo — não depende de codec ===== */
+
+// MP4 / MOV / M4V: procura o 'moov' e lê o tkhd da faixa de vídeo (com rotação)
+async function readMp4Dims(file){
+  const u32 = (dv,o)=> dv.getUint32(o);
+  // 1) acha o moov entre as caixas de topo (pode estar no fim do arquivo)
+  let off = 0, moov = null;
+  while(off + 8 <= file.size){
+    const hdr = new DataView(await file.slice(off, off + 16).arrayBuffer());
+    let size = u32(hdr,0);
+    const type = String.fromCharCode(hdr.getUint8(4),hdr.getUint8(5),hdr.getUint8(6),hdr.getUint8(7));
+    let hlen = 8;
+    if(size === 1){ size = Number(hdr.getBigUint64(8)); hlen = 16; }
+    else if(size === 0){ size = file.size - off; }
+    if(size < 8) return null;
+    if(type === 'moov'){
+      if(size > 64*1024*1024) return null;
+      moov = {buf: await file.slice(off + hlen, off + size).arrayBuffer()};
+      break;
+    }
+    off += size;
+  }
+  if(!moov) return null;
+  const dv = new DataView(moov.buf);
+  // 2) percorre as caixas filhas procurando trak > tkhd
+  function* boxes(start, end){
+    let o = start;
+    while(o + 8 <= end){
+      let size = dv.getUint32(o);
+      const type = String.fromCharCode(dv.getUint8(o+4),dv.getUint8(o+5),dv.getUint8(o+6),dv.getUint8(o+7));
+      let h = 8;
+      if(size === 1){ size = Number(dv.getBigUint64(o+8)); h = 16; }
+      else if(size === 0){ size = end - o; }
+      if(size < 8 || o + size > end) return;
+      yield {type, start: o + h, end: o + size};
+      o += size;
+    }
+  }
+  for(const trak of boxes(0, dv.byteLength)){
+    if(trak.type !== 'trak') continue;
+    for(const b of boxes(trak.start, trak.end)){
+      if(b.type !== 'tkhd') continue;
+      const v = dv.getUint8(b.start);
+      const m = b.start + (v === 1 ? 52 : 40);      // matriz de transformação
+      const w = dv.getUint32(m + 36) / 65536;
+      const h = dv.getUint32(m + 40) / 65536;
+      if(!w || !h) continue;                          // faixa de áudio: sem tamanho
+      const a = dv.getInt32(m), bb = dv.getInt32(m + 4);
+      const rotated = Math.abs(bb) > Math.abs(a);     // 90° / 270° (celular gravado "deitado")
+      return rotated ? {w: Math.round(h), h: Math.round(w)} : {w: Math.round(w), h: Math.round(h)};
+    }
+  }
+  return null;
+}
+
+// MXF: lê o descritor de imagem no cabeçalho (tags locais de largura/altura)
+async function readMxfDims(file){
+  const buf = new Uint8Array(await file.slice(0, Math.min(file.size, 4*1024*1024)).arrayBuffer());
+  const tag = (t1,t2)=>{
+    for(let i = 0; i + 8 <= buf.length; i++){
+      if(buf[i]===0x32 && buf[i+1]===t2 && buf[i+2]===0x00 && buf[i+3]===0x04){
+        return ((buf[i+4]<<24)|(buf[i+5]<<16)|(buf[i+6]<<8)|buf[i+7])>>>0;
+      }
+    }
+    return 0;
+  };
+  // 3209/3208 = Display Width/Height · 3203/3202 = Stored Width/Height
+  let w = tag(0x32,0x09) || tag(0x32,0x03);
+  let h = tag(0x32,0x08) || tag(0x32,0x02);
+  if(!w || !h || w > 16384 || h > 16384) return null;
+  // vídeo entrelaçado guarda a altura de UM campo (ex: 1920x540) -> dobra
+  if(w / h > 3) h *= 2;
+  return {w, h};
+}
+
+
 /* ---- Detecta dimensões (horizontal/vertical) do arquivo ---- */
 async function detectOrientation(file){
   const ext = (file.name.split('.').pop() || '').toLowerCase();
+
+  // 1) Cabeçalho do arquivo: funciona com QUALQUER codec (HEVC, ProRes, XDCAM…)
+  try{
+    let d = null;
+    if(['mp4','mov','m4v','3gp'].includes(ext)) d = await readMp4Dims(file);
+    else if(ext === 'mxf') d = await readMxfDims(file);
+    if(d && d.w && d.h) return {...d, orientation: classifyDims(d.w, d.h)};
+  }catch(e){ /* cabeçalho estranho: tenta o método do navegador */ }
+
+  // 2) Fallback: abrir no navegador (imagens e formatos sem cabeçalho legível)
   const isVideo = ['mp4','mov','webm','mkv','m4v','ogg','ogv'].includes(ext);
   const isImage = ['png','jpg','jpeg','gif','bmp','webp'].includes(ext);
-  if(!isVideo && !isImage) return null;   // formato não decodificável no browser
+  if(!isVideo && !isImage) return null;
 
   const url = URL.createObjectURL(file);
   const timeout = new Promise(res => setTimeout(()=> res(null), 8000));
@@ -1400,6 +1487,24 @@ async function detectOrientation(file){
   URL.revokeObjectURL(url);
   if(!dims || !dims.w || !dims.h) return null;
   return {...dims, orientation: classifyDims(dims.w, dims.h)};
+}
+
+/* Arquivos que ficaram com "?" na caixa (versão antiga): tenta ler o tamanho de novo */
+async function refreshUnknownDims(){
+  if(!destHandle) return;
+  let fixed = 0;
+  for(const e of outbox){
+    if(e.manual || (e.w && e.h)) continue;
+    try{
+      const f = await (await destHandle.getFileHandle(e.name)).getFile();
+      const d = await detectOrientation(f);
+      if(d){ e.w = d.w; e.h = d.h; fixed++; }
+    }catch(err){ /* arquivo não está nessa pasta */ }
+  }
+  if(fixed){
+    saveOutbox(); renderOutbox();
+    aiLog(`Tamanho identificado em ${fixed} arquivo(s) que estavam com "?".`, 'ok');
+  }
 }
 
 /* ---- copia 1 arquivo e coloca na caixa de entrada (outbox) ---- */
@@ -1524,7 +1629,7 @@ function renderOutbox(){
   if(!outbox.length){
     $('obTitle').textContent = '📥 PARA IMPORTAR · 0';
     $('obList').innerHTML = `<div class="ob-empty">Nada novo esperando importação.<br>
-      ${watching ? 'Vigiando a pasta da produção — arquivos novos aparecem aqui.' : 'Ligue o auto-import no painel de pastas pra começar a copiar.'}</div>`;
+      ${watching ? 'Vigiando a pasta da produção — arquivos novos aparecem aqui.' : 'Ligue o auto-verificar no painel de pastas pra começar a copiar.'}</div>`;
     return;
   }
   const newCount = outbox.filter(e => freshOutbox.has(e.path)).length;
@@ -1661,7 +1766,7 @@ $('obDismissAll').onclick = ()=>{
 };
 
 $('btnScanNow').onclick = async ()=>{
-  if(!watching){ aiLog('Ligue o auto-import primeiro.', 'warn'); updateProgressUI(); return; }
+  if(!watching){ aiLog('Ligue o auto-verificar primeiro.', 'warn'); updateProgressUI(); return; }
   aiLog('Verificando a pasta da produção agora…', 'info');
   await loadList(true);   // atualiza o que já está nas listas antes de comparar
   await scan();
@@ -1695,7 +1800,7 @@ $('btnWatch').onclick = async ()=>{
   if(watching){
     watching = false;
     clearInterval(aiTimer);
-    aiLog('Auto-import desligado.', 'warn');
+    aiLog('Auto-verificar desligado.', 'warn');
     updateAIUI();
     updateProgressUI();
     return;
@@ -1722,6 +1827,7 @@ $('btnWatch').onclick = async ()=>{
     return;
   }
   purgeStaleOutbox();
+  await refreshUnknownDims();
 
   knownFiles.clear();
   importedCount = 0;
@@ -1873,7 +1979,7 @@ function matchLaudas(laudas, allItems){
 $('btnRoteiro').onclick = ()=>{
   const pool = [...items, ...outbox];   // casa contra lista do vMix + caixa de entrada
   if(!pool.length){
-    toast('Não há arquivos disponíveis — carregue a lista do vMix ou aguarde o auto-import copiar algum arquivo.', true);
+    toast('Não há arquivos disponíveis — carregue a lista do vMix ou aguarde o auto-verificar copiar algum arquivo.', true);
     return;
   }
   if(!cfg.inputKey){
