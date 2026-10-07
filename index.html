@@ -533,7 +533,7 @@
   <div class="actions">
     <button id="btnWatch">▶ LIGAR AUTO-IMPORT</button>
     <button id="btnScanNow" title="Varrer a pasta da produção agora, sem esperar os 10s">⟳ Verificar agora</button>
-    <label class="chk"><input type="checkbox" id="chkExisting"> importar também o que JÁ está na pasta</label>
+    <label class="chk"><input type="checkbox" id="chkExisting" checked> importar também o que JÁ está na pasta</label>
     <span class="hint">verifica a cada 10s · inclui subpastas · espera o upload do produtor terminar</span>
   </div>
 
@@ -1312,6 +1312,12 @@ async function commitDest(pickedDest){
   save();
   await idbSet('dest', pickedDest);
   aiLog(`✔ Destino: ${cfg.destPath}`, 'ok');
+  purgeStaleOutbox();
+  if(watching){
+    knownFiles.clear();
+    aiLog('Destino mudou — vou reavaliar todos os arquivos da produção pra essa pasta nova.', 'info');
+    await scan(!$('chkExisting').checked);
+  }
   updateAIUI();
 }
 
@@ -1661,6 +1667,29 @@ $('btnScanNow').onclick = async ()=>{
   await scan();
 };
 
+$('chkExisting').checked = cfg.importExisting !== false;   // padrão: marcado
+$('chkExisting').onchange = ()=>{ cfg.importExisting = $('chkExisting').checked; save(); };
+
+/* Pasta ainda existe? (detecta pasta apagada/renomeada depois de escolhida) */
+async function folderExists(handle){
+  try{ for await (const _ of handle.values()){ break; } return true; }
+  catch(e){ return false; }
+}
+
+/* Tira da caixa itens de outra pasta de destino (ex: transmissão anterior apagada) */
+function purgeStaleOutbox(){
+  if(!cfg.destPath) return;
+  const prefix = cfg.destPath.toLowerCase() + '\\';
+  const before = outbox.length;
+  outbox = outbox.filter(o => o.path.toLowerCase().startsWith(prefix));
+  const removed = before - outbox.length;
+  if(removed){
+    saveOutbox();
+    renderOutbox();
+    aiLog(`${removed} item(ns) de uma pasta de destino antiga saíram da caixa de entrada.`, 'warn');
+  }
+}
+
 /* ---- liga / desliga ---- */
 $('btnWatch').onclick = async ()=>{
   if(watching){
@@ -1678,6 +1707,21 @@ $('btnWatch').onclick = async ()=>{
 
   if(!await verifyPermission(srcHandle, false)){ aiLog('Permissão negada na pasta da produção.', 'err'); return; }
   if(!await verifyPermission(destHandle, true)){ aiLog('Permissão negada na pasta de destino.', 'err'); return; }
+
+  if(!await folderExists(destHandle)){
+    destHandle = null; cfg.destPath = ''; save();
+    try{ await idbSet('dest', null); }catch(e){}
+    updateAIUI();
+    aiLog('A pasta de destino não existe mais (foi apagada ou renomeada). Clique em "Escolher…" e selecione a pasta nova.', 'err');
+    alert('A pasta de destino que estava configurada não existe mais.\n\nClique em "Escolher…" ao lado de PASTA DE DESTINO e selecione a pasta nova da transmissão.');
+    return;
+  }
+  if(!await folderExists(srcHandle)){
+    aiLog('A pasta da produção não está acessível (apagada, renomeada ou rede fora). Escolha de novo.', 'err');
+    alert('A pasta da produção não está acessível.\n\nConfira se o share está conectado e escolha a pasta de novo.');
+    return;
+  }
+  purgeStaleOutbox();
 
   knownFiles.clear();
   importedCount = 0;
