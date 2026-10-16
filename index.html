@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VT Finder — vMix List</title>
+<title>vMix News</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root{
@@ -437,6 +437,24 @@
   #toast.err{border-color:var(--red)}
 
   /* ---------- Modal IPs ---------- */
+  /* ---------- Escolha da máquina ao abrir ---------- */
+  #pcMask{display:flex;position:fixed;inset:0;background:rgba(6,9,12,.88);z-index:200;align-items:center;justify-content:center}
+  #pcMask.hide{display:none}
+  #pcBox{background:var(--panel);border:1px solid var(--amber);border-radius:10px;padding:22px 26px;width:min(620px,92vw)}
+  #pcBox h3{font-size:13px;letter-spacing:.18em;color:var(--amber);margin-bottom:4px}
+  #pcBox .sub{color:var(--dim);font-size:12px;margin-bottom:16px}
+  #pcBox .grp{font-size:10.5px;font-weight:800;letter-spacing:.16em;color:var(--dim);font-family:var(--mono);margin:14px 0 8px}
+  #pcBox .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
+  #pcBox .pc{
+    background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px 10px;
+    cursor:pointer;text-align:center;color:var(--txt);font-family:inherit;
+  }
+  #pcBox .pc:hover{border-color:var(--amber);background:#2a2015}
+  #pcBox .pc.last{border-color:var(--green)}
+  #pcBox .pc b{display:block;font-size:20px;letter-spacing:.06em}
+  #pcBox .pc span{display:block;font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-top:4px}
+  #pcBox .pc .tag{color:var(--green);font-size:9.5px;letter-spacing:.1em;margin-top:6px}
+
   #ipMask{
     display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;
     align-items:center;justify-content:center;
@@ -501,7 +519,7 @@
 <body>
 
 <header>
-  <span class="logo">VT&nbsp;FINDER</span>
+  <span class="logo">VMIX&nbsp;NEWS</span>
   <select id="pcSel" title="Máquina"></select>
   <select id="inputSel" title="Input de lista no vMix">
     <option value="">— carregar inputs —</option>
@@ -621,6 +639,14 @@
   </div>
 </div>
 
+<div id="pcMask">
+  <div id="pcBox">
+    <h3>ONDE VOCÊ ESTÁ OPERANDO?</h3>
+    <div class="sub">Escolha a máquina do vMix deste posto. Dá pra trocar depois no seletor do topo.</div>
+    <div id="pcGroups"></div>
+  </div>
+</div>
+
 <div id="ipMask">
   <div id="ipBox">
     <h3>MÁQUINAS (nome · IP)</h3>
@@ -640,7 +666,8 @@
 /* ================= CONFIG ================= */
 const DEFAULT_PCS = {
   'PD2':'10.10.0.102','PD3':'10.10.0.103','PD4':'10.10.0.104',
-  'PD5':'10.10.0.105','PD6':'10.10.0.106'
+  'PD5':'10.10.0.105','PD6':'10.10.0.106',
+  'SWA':'10.10.0.114','SWB':'10.10.0.1'
 };
 const LS_KEY = 'vtfinder_cfg';
 const MEDIA_EXT = [
@@ -652,6 +679,13 @@ const MEDIA_EXT = [
 
 let cfg = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
 let PCS = cfg.pcs && Object.keys(cfg.pcs).length ? cfg.pcs : {...DEFAULT_PCS};
+// quem já tinha uma lista salva ganha SWA/SWB uma única vez (sem desfazer edições)
+if(!cfg.migratedSW){
+  for(const k of ['SWA','SWB']) if(!(k in PCS)) PCS[k] = DEFAULT_PCS[k];
+  cfg.migratedSW = true;
+  if(cfg.pcs) cfg.pcs = PCS;
+  localStorage.setItem(LS_KEY, JSON.stringify(cfg));
+}
 let items = [];
 let view  = [];
 let kbdPos = -1;
@@ -659,9 +693,12 @@ let timer = null;
 let freshNames = new Set();   // marca "NOVO" nos itens recém-importados
 
 const $ = id => document.getElementById(id);
+function cleanHost(ip){
+  return String(ip || '').trim().replace(/^https?:\/\//i,'').replace(/\/.*$/,'');
+}
 const base = () => {
-  const ip = PCS[cfg.pc] || '';
-  return `http://${ip.includes(':') ? ip : ip + ':8088'}/api/`;
+  const host = cleanHost(PCS[cfg.pc]);
+  return `http://${host.includes(':') ? host : host + ':8088'}/api/`;
 };
 
 /* ================= UI: seletor de PC ================= */
@@ -1512,26 +1549,29 @@ async function importFile(srcFileHandle, file){
   const name = srcFileHandle.name;
   const srcRel = (await srcHandle.resolve(srcFileHandle) || []).join('/');
   try{
+    // Procura uma cópia que JÁ seja este arquivo: NOME, NOME_1, NOME_2…
+    // Mesmo tamanho = mesmo arquivo -> não copia de novo.
+    // Nome livre encontrado antes disso = arquivo realmente diferente -> copia com esse nome.
+    const dot  = name.lastIndexOf('.');
+    const stem = dot>-1 ? name.slice(0,dot) : name;
+    const ext  = dot>-1 ? name.slice(dot) : '';
     let finalName = name;
     let alreadyCopied = false;
-    try{
-      const existing = await destHandle.getFileHandle(name);
-      const ef = await existing.getFile();
-      if(ef.size === file.size){
+    for(let n = 0; n < 100; n++){
+      const candidate = n === 0 ? name : `${stem}_${n}${ext}`;
+      let ef = null;
+      try{ ef = await (await destHandle.getFileHandle(candidate)).getFile(); }
+      catch(e){ finalName = candidate; break; }          // nome livre
+      if(ef.size === file.size){                          // já copiado antes
+        finalName = candidate;
         alreadyCopied = true;
-        aiLog(`${name} já estava na pasta de destino — sem copiar de novo.`, 'info');
-      }else{
-      const dot = name.lastIndexOf('.');
-      const stem = dot>-1 ? name.slice(0,dot) : name;
-      const ext  = dot>-1 ? name.slice(dot) : '';
-      let n = 1;
-      while(true){
-        finalName = `${stem}_${n}${ext}`;
-        try{ await destHandle.getFileHandle(finalName); n++; }
-        catch(e){ break; }
+        aiLog(`${name} já estava na pasta de destino${candidate !== name ? ' como ' + candidate : ''} — sem copiar de novo.`, 'info');
+        break;
       }
-      }
-    }catch(e){ /* não existe: segue com o nome original */ }
+    }
+    if(!alreadyCopied && finalName !== name){
+      aiLog(`⚠ A produção tem outro arquivo diferente chamado "${name}" — este será salvo como ${finalName}.`, 'warn');
+    }
 
     if(!alreadyCopied){
     aiLog(`Copiando ${name} (${(file.size/1048576).toFixed(0)} MB)…`, 'info');
@@ -1953,7 +1993,9 @@ function matchLaudas(laudas, allItems){
   const N = Math.max(allItems.length, 1);
   const idf = t => Math.log(N / (df.get(t) || N));
 
-  return laudas.map(({tipo, label})=>{
+  const usedBy = new Map();      // caminho -> nº da lauda que já usa esse arquivo
+  const labelFile = new Map();   // lauda com texto idêntico -> mesmo arquivo
+  return laudas.map(({tipo, label}, li)=>{
     const lt = [...new Set(tokens(label))];
     if(!lt.length) return {tipo, label, matchPath:null, score:0, options:[]};
     const totalWeight = lt.reduce((s,t)=> s + Math.max(idf(t), 0.1), 0) || 1;
@@ -1965,11 +2007,22 @@ function matchLaudas(laudas, allItems){
     }).filter(x => x.score > 0)
       .sort((a,b)=> b.score - a.score);
 
-    const best = scores[0];
+    // Lauda repetida no roteiro (mesmo texto): usa o mesmo arquivo, sem tentar outro
+    const key = tipo + '|' + lt.slice().sort().join(' ');
+    let pick = null;
+    if(labelFile.has(key)){
+      pick = labelFile.get(key);
+    }else{
+      // Laudas diferentes: prefere um arquivo que nenhuma outra lauda pegou
+      const valid = scores.filter(x => x.score >= 0.35);
+      pick = valid.find(x => !usedBy.has(x.path)) || valid[0] || null;
+    }
+    if(pick && !usedBy.has(pick.path)) usedBy.set(pick.path, li + 1);
+    if(pick) labelFile.set(key, pick);
     return {
       tipo, label,
-      matchPath: best && best.score >= 0.35 ? best.path : null,
-      score: best ? best.score : 0,
+      matchPath: pick ? pick.path : null,
+      score: pick ? pick.score : (scores[0] ? scores[0].score : 0),
       options: scores.slice(0, 8)
     };
   });
@@ -2016,9 +2069,12 @@ function renderRoteiroModal(){
   list.innerHTML = '';
   const outboxPaths = new Set(outbox.map(o => o.path));
   const inOutbox = p => outboxPaths.has(p) ? ' 📥' : '';
+  const firstUse = new Map();   // caminho -> 1ª lauda que usa
+  roteiroDraft.forEach((r, i)=>{ if(r.matchPath && !firstUse.has(r.matchPath)) firstUse.set(r.matchPath, i + 1); });
 
   roteiroDraft.forEach((r, i)=>{
     const cls = !r.matchPath ? 'miss' : (r.score >= 0.6 ? 'ok' : 'weak');
+    // (repetição marcada no rot-conf; a cor segue a confiança do casamento)
     const row = document.createElement('div');
     row.className = 'rot-row ' + cls;
     const optsHtml = ['<option value="">— não usar este VT —</option>'];
@@ -2040,7 +2096,9 @@ function renderRoteiroModal(){
       <span class="rot-label" title="${escapeHTML(r.label)}">${escapeHTML(r.label)}</span>
       <span class="rot-arrow">→</span>
       <select></select>
-      <span class="rot-conf">${r.matchPath ? Math.round(r.score*100)+'%' : 'sem match'}</span>`;
+      <span class="rot-conf">${!r.matchPath ? 'sem match'
+        : firstUse.get(r.matchPath) !== i + 1 ? `= lauda ${firstUse.get(r.matchPath)}`
+        : Math.round(r.score*100)+'%'}</span>`;
     const sel = row.querySelector('select');
     sel.innerHTML = optsHtml.join('');
     sel.onchange = ()=>{
@@ -2052,11 +2110,13 @@ function renderRoteiroModal(){
     list.appendChild(row);
   });
   const matched = roteiroDraft.filter(r => r.matchPath).length;
+  const repeated = matched - firstUse.size;
   const fromOutbox = roteiroDraft.filter(r => r.matchPath && outboxPaths.has(r.matchPath)).length;
   const byType = {VT:0, ARTE:0, ILU:0};
   roteiroDraft.forEach(r => byType[r.tipo]++);
   const typeSummary = Object.entries(byType).filter(([,n])=>n>0).map(([t,n])=>`${n} ${t}`).join(' · ');
   $('rotInfo').textContent = `${matched}/${roteiroDraft.length} casados · ${typeSummary}` +
+    (repeated ? ` · ${repeated} repetida(s) entram 1x` : '') +
     (fromOutbox ? ` · ${fromOutbox} da caixa 📥` : '');
   $('rotSub').textContent = matched === roteiroDraft.length
     ? `Todas as ${roteiroDraft.length} laudas casaram. 📥 = ainda na caixa de entrada, será importado ao aplicar.`
@@ -2067,7 +2127,13 @@ $('rotCancel').onclick = ()=> $('rotMask').classList.remove('open');
 $('rotMask').onclick = (e)=>{ if(e.target === $('rotMask')) $('rotMask').classList.remove('open'); };
 
 $('rotApply').onclick = async ()=>{
-  const roteiro = roteiroDraft.filter(r => r.matchPath);
+  // cada arquivo entra uma vez só, na posição da PRIMEIRA lauda que o usa
+  const seenPaths = new Set();
+  const roteiro = roteiroDraft.filter(r => {
+    if(!r.matchPath || seenPaths.has(r.matchPath)) return false;
+    seenPaths.add(r.matchPath);
+    return true;
+  });
   if(!roteiro.length){ toast('Nenhuma lauda casada — nada a aplicar.', true); return; }
 
   const outboxByPath = new Map(outbox.map(o => [o.path, o]));
@@ -2182,8 +2248,33 @@ $('rotApply').onclick = async ()=>{
   }
 };
 
+/* ================= Escolha da máquina ao abrir ================= */
+function openPcPicker(){
+  const groups = {'PDs': [], 'SWITCHERS': []};
+  Object.keys(PCS).forEach(k => (/^sw/i.test(k) ? groups['SWITCHERS'] : groups['PDs']).push(k));
+  $('pcGroups').innerHTML = Object.entries(groups).filter(([,ks])=>ks.length).map(([g,ks])=>`
+    <div class="grp">${g}</div>
+    <div class="grid">${ks.map(k=>`
+      <button class="pc${k===cfg.pc?' last':''}" data-pc="${escapeHTML(k)}">
+        <b>${escapeHTML(k)}</b><span>${escapeHTML(cleanHost(PCS[k]))}</span>
+        ${k===cfg.pc ? '<div class="tag">ÚLTIMO USADO</div>' : ''}
+      </button>`).join('')}
+    </div>`).join('');
+  $('pcGroups').querySelectorAll('.pc').forEach(b=>{
+    b.onclick = ()=>{
+      cfg.pc = b.dataset.pc; save();
+      rebuildPcSel();
+      $('pcMask').classList.add('hide');
+      loadInputs();
+    };
+  });
+  $('pcMask').classList.remove('hide');
+  const last = $('pcGroups').querySelector('.pc.last') || $('pcGroups').querySelector('.pc');
+  if(last) last.focus();   // Enter confirma o último usado
+}
+
 /* ================= Boot ================= */
-loadInputs();
+openPcPicker();
 setAuto();
 updateAIUI();
 </script>
