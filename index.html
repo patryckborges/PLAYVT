@@ -1394,48 +1394,49 @@ async function commitDest(pickedDest){
 }
 
 /* ---- varredura recursiva da origem ---- */
-const EXPORT_DIRS = /^exports?$/i;   // EXPORT/EXPORTS aparecem como subpasta, mas começam DESMARCADAS
 
 /* ---------- Seleção de subpastas (1º nível da pasta da produção) ---------- */
-const ROOT_KEY = '__raiz__';            // arquivos soltos direto na pasta da produção
 let subFolders = [];                    // nomes das subpastas visíveis agora
 let freshSubs = new Set();              // subpastas que apareceram nesta sessão
 
 function subState(){
   if(!srcHandle) return {};
+  // versão anterior marcava tudo sozinha: zera uma vez pra valer a regra nova
+  if(!cfg.subSelV2){ cfg.subSel = {}; cfg.subSelV2 = true; }
   cfg.subSel = cfg.subSel || {};
   return (cfg.subSel[srcHandle.name] = cfg.subSel[srcHandle.name] || {});
 }
-// Subpasta que o operador nunca viu entra MARCADA: nada da produção se perde sem ele saber
+// Subpasta só entra se o operador MARCAR
 function subAllowed(name){
   const st = subState();
-  return st[name] !== false;
+  return st[name] === true;
 }
 function relAllowed(rel){
   const parts = rel.split('/');
-  return subAllowed(parts.length > 1 ? parts[0] : ROOT_KEY);
+  if(parts.length === 1) return true;          // arquivo direto na pasta da produção: sempre entra
+  return subAllowed(parts[0]);
 }
 
 async function refreshSubfolders(){
   if(!srcHandle) return;
   const names = [];
-  let hasRootFiles = false;
   try{
     for await (const entry of srcHandle.values()){
-      if(entry.kind === 'directory'){
-        names.push(entry.name);
-      }else if(isMedia(entry.name)) hasRootFiles = true;
+      if(entry.kind === 'directory') names.push(entry.name);
     }
   }catch(e){ return; }
   names.sort((a,b)=> a.localeCompare(b,'pt',{numeric:true}));
   const st = subState();
   const known = new Set(Object.keys(st));
-  const list = (hasRootFiles ? [ROOT_KEY] : []).concat(names);
+  const list = names;
   list.forEach(n=>{
     if(!known.has(n)){
-      st[n] = !EXPORT_DIRS.test(n.trim());   // EXPORT(S) só entra se o operador marcar
-      if(subFolders.length) freshSubs.add(n);   // não marca NOVA na primeira leitura
-      if(subFolders.length) aiLog(`Nova subpasta na produção: "${n === ROOT_KEY ? 'arquivos soltos' : n}" (${st[n] ? 'marcada pra receber' : 'desmarcada — marque se quiser receber'}).`, 'info');
+      st[n] = false;                            // toda subpasta nova entra desmarcada
+      if(subFolders.length){                    // não avisa na primeira leitura
+        freshSubs.add(n);
+        aiLog(`Nova subpasta na produção: "${n}" — desmarcada. Marque se quiser receber os arquivos dela.`, 'warn');
+        toast(`📁 Nova subpasta na produção: ${n} — marque pra receber`);
+      }
     }
   });
   save();
@@ -1452,7 +1453,7 @@ function renderSubfolders(){
     return;
   }
   if(!subFolders.length){
-    box.innerHTML = '<span class="val none">nenhuma subpasta — todos os arquivos da pasta serão recebidos</span>';
+    box.innerHTML = '<span class="val none">nenhuma subpasta — os arquivos da pasta da produção já são recebidos</span>';
     $('subCtl').style.display = 'none';
     return;
   }
@@ -1461,9 +1462,9 @@ function renderSubfolders(){
   subFolders.forEach(n=>{
     const on = subAllowed(n);
     const lab = document.createElement('label');
-    lab.className = 'subchip' + (on ? ' on' : '') + (freshSubs.has(n) ? ' new' : '') + (n === ROOT_KEY ? ' root' : '');
-    lab.title = n === ROOT_KEY ? 'Arquivos que estão direto na pasta da produção, fora de subpastas' : n;
-    lab.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}><span>${escapeHTML(n === ROOT_KEY ? 'arquivos soltos' : n)}</span>`;
+    lab.className = 'subchip' + (on ? ' on' : '') + (freshSubs.has(n) ? ' new' : '');
+    lab.title = n;
+    lab.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}><span>${escapeHTML(n)}</span>`;
     lab.querySelector('input').onchange = (e)=> setSub(n, e.target.checked);
     box.appendChild(lab);
   });
@@ -1474,10 +1475,10 @@ function setSub(name, on, quiet){
   st[name] = on;
   freshSubs.delete(name);
   save();
-  const label = name === ROOT_KEY ? 'arquivos soltos' : name;
+  const label = name;
   const inFolder = o => {
     const parts = (o.src || '').split('/');
-    return (parts.length > 1 ? parts[0] : ROOT_KEY) === name;
+    return parts.length > 1 && parts[0] === name;
   };
   if(!on){
     // o que veio dessa subpasta e ainda não foi importado sai da caixa
@@ -1489,7 +1490,7 @@ function setSub(name, on, quiet){
     // reavaliar os arquivos dessa subpasta na próxima varredura
     for(const k of [...knownFiles.keys()]){
       const parts = k.split('/');
-      if((parts.length > 1 ? parts[0] : ROOT_KEY) === name) knownFiles.delete(k);
+      if(parts.length > 1 && parts[0] === name) knownFiles.delete(k);
     }
     if(!quiet) aiLog(`Subpasta "${label}" marcada — arquivos dela entram na próxima verificação.`, 'info');
   }
