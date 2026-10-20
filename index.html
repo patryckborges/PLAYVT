@@ -186,6 +186,7 @@
     font-family:var(--mono);border-top:1px solid var(--line);border-bottom:1px solid var(--line);
   }
   .sep-row.roteiro{color:var(--amber);background:#1a1408}
+  .sep-row.list-sep{position:sticky;top:0;z-index:2;color:var(--green);background:#0b1a12}
 
   /* ---------- Modal de preview do Roteiro ---------- */
   #rotMask{
@@ -277,6 +278,22 @@
   }
 
   /* ---------- Outbox de novos arquivos (topo da lista) ---------- */
+  /* ---------- Subpastas da produção ---------- */
+  .subrow{display:flex;gap:10px;align-items:flex-start;min-width:0}
+  #subList{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0;max-height:96px;overflow-y:auto}
+  .subchip{
+    display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:14px;cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);font-family:var(--mono);font-size:11.5px;
+    color:var(--dim);user-select:none;
+  }
+  .subchip input{accent-color:var(--green);margin:0;cursor:pointer}
+  .subchip.on{border-color:var(--green);color:var(--txt);background:#0e2418}
+  .subchip.new::after{content:'NOVA';font-size:8.5px;font-weight:800;letter-spacing:.1em;color:#000;background:var(--blue);border-radius:3px;padding:1px 4px}
+  .subchip.root{font-style:italic}
+  .subctl{display:flex;gap:4px;flex:0 0 auto}
+  .subctl button{padding:3px 8px;font-size:10.5px;color:var(--dim)}
+  .subnote{font-family:var(--mono);font-size:10.5px;color:#4d5a66;align-self:center}
+
   /* ---------- Layout em duas colunas ---------- */
   #cols{flex:1;display:flex;min-height:0}
   #cols .col{flex:1 1 0;min-width:0;display:flex;flex-direction:column}
@@ -521,9 +538,6 @@
 <header>
   <span class="logo">VMIX&nbsp;NEWS</span>
   <select id="pcSel" title="Máquina"></select>
-  <select id="inputSel" title="Input de lista no vMix">
-    <option value="">— carregar inputs —</option>
-  </select>
   <button id="btnRefresh" title="Recarregar lista">⟳ Atualizar</button>
   <button id="btnAI" title="Mostrar/ocultar o painel de pastas">📁 Pastas</button>
   <button id="btnRoteiro" title="Importar PDF do roteiro e ordenar os VTs pela ordem do programa">📄 Roteiro</button>
@@ -538,6 +552,14 @@
     <div class="pathline">
       <button id="btnSrc">Escolher…</button>
       <span class="val none" id="srcName">nenhuma pasta conectada</span>
+    </div>
+
+    <span class="lbl">RECEBER DAS SUBPASTAS</span>
+    <div class="subrow">
+      <div id="subList"><span class="val none">escolha a pasta da produção pra ver as subpastas</span></div>
+      <span class="subctl" id="subCtl" style="display:none">
+        <button id="subAll">todas</button><button id="subNone">nenhuma</button>
+      </span>
     </div>
 
     <span class="lbl">PASTA DE DESTINO</span>
@@ -667,7 +689,7 @@
 const DEFAULT_PCS = {
   'PD2':'10.10.0.102','PD3':'10.10.0.103','PD4':'10.10.0.104',
   'PD5':'10.10.0.105','PD6':'10.10.0.106',
-  'SWA':'10.10.0.114','SWB':'10.10.0.1'
+  'SWA':'10.10.0.114','SWB':'10.10.0.101'
 };
 const LS_KEY = 'vtfinder_cfg';
 const MEDIA_EXT = [
@@ -683,6 +705,12 @@ let PCS = cfg.pcs && Object.keys(cfg.pcs).length ? cfg.pcs : {...DEFAULT_PCS};
 if(!cfg.migratedSW){
   for(const k of ['SWA','SWB']) if(!(k in PCS)) PCS[k] = DEFAULT_PCS[k];
   cfg.migratedSW = true;
+  if(cfg.pcs) cfg.pcs = PCS;
+  localStorage.setItem(LS_KEY, JSON.stringify(cfg));
+}
+// SWB tinha sido cadastrado como 10.10.0.1 numa versão anterior: corrige só se ninguém mexeu
+if(PCS.SWB === '10.10.0.1'){
+  PCS.SWB = '10.10.0.101';
   if(cfg.pcs) cfg.pcs = PCS;
   localStorage.setItem(LS_KEY, JSON.stringify(cfg));
 }
@@ -818,47 +846,42 @@ let availableInputs = [];   // [{key, num, title, shortTitle}]
 let allListPaths = new Map();   // caminho normalizado -> nome da lista onde já está
 
 async function loadInputs(){
-  const sel = $('inputSel');
-  sel.innerHTML = '<option value="">carregando…</option>';
   try{
     const xml = await apiXML();
     setStatus(true, cfg.pc + ' conectado');
-    sel.innerHTML = '';
     availableInputs = [];
     xml.querySelectorAll('inputs > input').forEach(inp=>{
       const type = inp.getAttribute('type') || '';
       if(type === 'VideoList' || inp.querySelector(':scope > list')){
-        const info = {
+        availableInputs.push({
           key: inp.getAttribute('key'),
           num: inp.getAttribute('number'),
           title: inp.getAttribute('title') || '',
           shortTitle: inp.getAttribute('shortTitle') || inp.getAttribute('title') || ''
-        };
-        availableInputs.push(info);
-        const o = document.createElement('option');
-        o.value = info.key;
-        o.textContent = `${info.num} · ${info.shortTitle}`;
-        sel.appendChild(o);
+        });
       }
     });
     if(!availableInputs.length){
-      sel.innerHTML = '<option value="">nenhuma List encontrada</option>';
       renderEmpty('Nenhum input do tipo <b>List</b> foi encontrado neste vMix.');
       return;
     }
-    if(cfg.inputKey && availableInputs.some(i => i.key === cfg.inputKey))
-      sel.value = cfg.inputKey;
-    cfg.inputKey = sel.value; save();
+    const miss = ['horizontal','vertical'].filter(o => !pickListByOrientation(o));
+    if(miss.length) toast(`Não achei a lista CONTEÚDO ${miss.map(m=>m.toUpperCase()).join(' / ')} neste vMix.`, true);
     await loadList();
     loadOutbox();
   }catch(e){
     setStatus(false, 'sem conexão');
-    sel.innerHTML = '<option value="">— erro —</option>';
     renderEmpty(`Não foi possível ler o vMix em <b>${base().replace('/api/','')}</b>.<br>
       Verifique se o Web Controller está ativo (Settings → Web Controller).<br>
       Se o app estiver aberto por HTTPS, libere "Conteúdo não seguro"<br>
       nas configurações do site no Chrome (cadeado → Configurações do site).`);
   }
+}
+
+/* Listas exibidas na coluna da direita (as de destino), na ordem H, V */
+function shownLists(){
+  const ks = ['horizontal','vertical'].map(pickListByOrientation).filter(Boolean);
+  return [...new Set(ks)];
 }
 
 /* Regra pela PROPORÇÃO, não pelo tamanho exato:
@@ -901,47 +924,43 @@ function inputTitle(key){
   return info ? info.shortTitle : '';
 }
 
-$('inputSel').onchange = () => {
-  cfg.inputKey = $('inputSel').value; save(); loadList();
-};
 
 async function loadList(silent=false){
-  if(!cfg.inputKey) return;
+  if(!availableInputs.length) return;
   try{
     const xml = await apiXML();
     setStatus(true, cfg.pc + ' conectado');
-    const inp = [...xml.querySelectorAll('inputs > input')]
-                  .find(i => i.getAttribute('key') === cfg.inputKey);
-    if(!inp){ if(!silent) toast('Input não encontrado — recarregando inputs', true); loadInputs(); return; }
+    const nodesAll = [...xml.querySelectorAll('inputs > input')];
 
-    // mapa de tudo que já está em QUALQUER lista do vMix (horizontal, vertical…)
+    // mapa de tudo que já está em QUALQUER lista do vMix (horizontal, vertical, fundo…)
     allListPaths = new Map();
-    xml.querySelectorAll('inputs > input').forEach(li=>{
+    nodesAll.forEach(li=>{
       const title = li.getAttribute('shortTitle') || li.getAttribute('title') || '';
       li.querySelectorAll(':scope > list > item').forEach(n=>{
         allListPaths.set(n.textContent.trim().toLowerCase(), title);
       });
     });
 
-    const nodes = inp.querySelectorAll(':scope > list > item');
-    items = [...nodes].map((n, i)=>{
-      const path = n.textContent.trim();
-      const name = path.split(/[\\/]/).pop();
-      const dot  = name.lastIndexOf('.');
-      return {
-        idx : i+1,
-        path,
-        name,
-        ext : dot > -1 ? name.slice(dot+1).toLowerCase() : '',
-        selected : n.getAttribute('selected') === 'true',
-        enabled  : n.getAttribute('enabled') !== 'false',
-        fresh : freshNames.has(name)
-      };
+    items = [];
+    shownLists().forEach((key, order)=>{
+      const inp = nodesAll.find(i => i.getAttribute('key') === key);
+      if(!inp) return;
+      [...inp.querySelectorAll(':scope > list > item')].forEach((n, i)=>{
+        const path = n.textContent.trim();
+        const name = path.split(/[\\/]/).pop();
+        const dot  = name.lastIndexOf('.');
+        items.push({
+          idx: i+1, path, name,
+          ext: dot > -1 ? name.slice(dot+1).toLowerCase() : '',
+          listKey: key, listOrder: order, listTitle: inputTitle(key),
+          fresh: freshNames.has(name)
+        });
+      });
     });
     applyFilter();
   }catch(e){
     setStatus(false, 'sem conexão');
-    if(!silent) toast('Falha ao ler a lista: '+e.message, true);
+    if(!silent) toast('Falha ao ler as listas: '+e.message, true);
   }
 }
 
@@ -958,10 +977,13 @@ function applyFilter(){
   view.forEach(it => it.match = !t.length ? false : t.every(x => norm(it.name).includes(x)));
 
   const mode = $('sortSel').value;
-  if(mode==='az')  view.sort((a,b)=> a.name.localeCompare(b.name,'pt'));
-  if(mode==='za')  view.sort((a,b)=> b.name.localeCompare(a.name,'pt'));
-  if(mode==='ext') view.sort((a,b)=> a.ext.localeCompare(b.ext) || a.name.localeCompare(b.name,'pt'));
-  if(mode==='vmix')view.sort((a,b)=> a.idx - b.idx);
+  const inner = {
+    az:   (a,b)=> a.name.localeCompare(b.name,'pt'),
+    za:   (a,b)=> b.name.localeCompare(a.name,'pt'),
+    ext:  (a,b)=> a.ext.localeCompare(b.ext) || a.name.localeCompare(b.name,'pt'),
+    vmix: (a,b)=> a.idx - b.idx
+  }[mode];
+  view.sort((a,b)=> (a.listOrder - b.listOrder) || inner(a,b));   // H primeiro, depois V
 
   // se há busca ativa, foco vai pro primeiro match; senão, vai pro início
   if(t.length){
@@ -991,8 +1013,9 @@ function highlight(name, t){
 function escapeHTML(s){ return s.replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 function updateVmixTitle(){
-  const t = (typeof inputTitle === 'function' && cfg.inputKey) ? inputTitle(cfg.inputKey) : '';
-  $('vmixTitle').textContent = `✔ JÁ NO vMIX${t ? ' · ' + t : ''} · ${items.length}`;
+  const h = items.filter(i => i.listOrder === 0).length;
+  const v = items.filter(i => i.listOrder === 1).length;
+  $('vmixTitle').textContent = `✔ JÁ NO vMIX · H ${h} · V ${v}`;
 }
 
 function render(){
@@ -1008,7 +1031,16 @@ function render(){
   }
   wrap.innerHTML = '';
   const frag = document.createDocumentFragment();
+  let lastList = null;
   view.forEach((it, vi)=>{
+    if(it.listKey !== lastList){
+      lastList = it.listKey;
+      const n = items.filter(x => x.listKey === it.listKey).length;
+      const sep = document.createElement('div');
+      sep.className = 'sep-row list-sep';
+      sep.textContent = `${it.listTitle} · ${n} ite${n === 1 ? 'm' : 'ns'}`;
+      frag.appendChild(sep);
+    }
     const row = document.createElement('div');
     row.className = 'row'
       + (it.match ? ' match' : '')
@@ -1262,6 +1294,8 @@ $('btnSrc').onclick = async ()=>{
     srcHandle = await showDirectoryPicker({mode:'read'});
     await idbSet('src', srcHandle);
     aiLog(`Pasta da produção conectada: ${srcHandle.name}`, 'info');
+    subFolders = []; freshSubs.clear();
+    await refreshSubfolders();
     updateAIUI();
   }catch(e){ /* cancelado */ }
 };
@@ -1360,13 +1394,115 @@ async function commitDest(pickedDest){
 }
 
 /* ---- varredura recursiva da origem ---- */
-const IGNORED_DIRS = /^exports?$/i;   // pastas da produção que o app sempre ignora
+const EXPORT_DIRS = /^exports?$/i;   // EXPORT/EXPORTS aparecem como subpasta, mas começam DESMARCADAS
+
+/* ---------- Seleção de subpastas (1º nível da pasta da produção) ---------- */
+const ROOT_KEY = '__raiz__';            // arquivos soltos direto na pasta da produção
+let subFolders = [];                    // nomes das subpastas visíveis agora
+let freshSubs = new Set();              // subpastas que apareceram nesta sessão
+
+function subState(){
+  if(!srcHandle) return {};
+  cfg.subSel = cfg.subSel || {};
+  return (cfg.subSel[srcHandle.name] = cfg.subSel[srcHandle.name] || {});
+}
+// Subpasta que o operador nunca viu entra MARCADA: nada da produção se perde sem ele saber
+function subAllowed(name){
+  const st = subState();
+  return st[name] !== false;
+}
+function relAllowed(rel){
+  const parts = rel.split('/');
+  return subAllowed(parts.length > 1 ? parts[0] : ROOT_KEY);
+}
+
+async function refreshSubfolders(){
+  if(!srcHandle) return;
+  const names = [];
+  let hasRootFiles = false;
+  try{
+    for await (const entry of srcHandle.values()){
+      if(entry.kind === 'directory'){
+        names.push(entry.name);
+      }else if(isMedia(entry.name)) hasRootFiles = true;
+    }
+  }catch(e){ return; }
+  names.sort((a,b)=> a.localeCompare(b,'pt',{numeric:true}));
+  const st = subState();
+  const known = new Set(Object.keys(st));
+  const list = (hasRootFiles ? [ROOT_KEY] : []).concat(names);
+  list.forEach(n=>{
+    if(!known.has(n)){
+      st[n] = !EXPORT_DIRS.test(n.trim());   // EXPORT(S) só entra se o operador marcar
+      if(subFolders.length) freshSubs.add(n);   // não marca NOVA na primeira leitura
+      if(subFolders.length) aiLog(`Nova subpasta na produção: "${n === ROOT_KEY ? 'arquivos soltos' : n}" (${st[n] ? 'marcada pra receber' : 'desmarcada — marque se quiser receber'}).`, 'info');
+    }
+  });
+  save();
+  const changed = list.join('|') !== subFolders.join('|');
+  subFolders = list;
+  if(changed || !$('subList').children.length) renderSubfolders();
+}
+
+function renderSubfolders(){
+  const box = $('subList');
+  if(!srcHandle){
+    box.innerHTML = '<span class="val none">escolha a pasta da produção pra ver as subpastas</span>';
+    $('subCtl').style.display = 'none';
+    return;
+  }
+  if(!subFolders.length){
+    box.innerHTML = '<span class="val none">nenhuma subpasta — todos os arquivos da pasta serão recebidos</span>';
+    $('subCtl').style.display = 'none';
+    return;
+  }
+  $('subCtl').style.display = '';
+  box.innerHTML = '';
+  subFolders.forEach(n=>{
+    const on = subAllowed(n);
+    const lab = document.createElement('label');
+    lab.className = 'subchip' + (on ? ' on' : '') + (freshSubs.has(n) ? ' new' : '') + (n === ROOT_KEY ? ' root' : '');
+    lab.title = n === ROOT_KEY ? 'Arquivos que estão direto na pasta da produção, fora de subpastas' : n;
+    lab.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}><span>${escapeHTML(n === ROOT_KEY ? 'arquivos soltos' : n)}</span>`;
+    lab.querySelector('input').onchange = (e)=> setSub(n, e.target.checked);
+    box.appendChild(lab);
+  });
+}
+
+function setSub(name, on, quiet){
+  const st = subState();
+  st[name] = on;
+  freshSubs.delete(name);
+  save();
+  const label = name === ROOT_KEY ? 'arquivos soltos' : name;
+  const inFolder = o => {
+    const parts = (o.src || '').split('/');
+    return (parts.length > 1 ? parts[0] : ROOT_KEY) === name;
+  };
+  if(!on){
+    // o que veio dessa subpasta e ainda não foi importado sai da caixa
+    const before = outbox.length;
+    outbox = outbox.filter(o => !inFolder(o));
+    if(outbox.length !== before){ saveOutbox(); renderOutbox(); }
+    if(!quiet) aiLog(`Subpasta "${label}" desmarcada — arquivos dela não serão mais recebidos.`, 'warn');
+  }else{
+    // reavaliar os arquivos dessa subpasta na próxima varredura
+    for(const k of [...knownFiles.keys()]){
+      const parts = k.split('/');
+      if((parts.length > 1 ? parts[0] : ROOT_KEY) === name) knownFiles.delete(k);
+    }
+    if(!quiet) aiLog(`Subpasta "${label}" marcada — arquivos dela entram na próxima verificação.`, 'info');
+  }
+  renderSubfolders();
+  updateProgressUI();
+}
+$('subAll').onclick  = ()=>{ subFolders.forEach(n => setSub(n, true, true));  aiLog('Todas as subpastas marcadas.', 'info'); };
+$('subNone').onclick = ()=>{ subFolders.forEach(n => setSub(n, false, true)); aiLog('Todas as subpastas desmarcadas.', 'warn'); };
 
 async function* walk(dir, prefix=''){
   for await (const entry of dir.values()){
     if(entry.kind === 'file') yield [prefix + entry.name, entry];
     else if(entry.kind === 'directory'){
-      if(IGNORED_DIRS.test(entry.name.trim())) continue;   // EXPORT / EXPORTS nunca entram
       yield* walk(entry, prefix + entry.name + '/');
     }
   }
@@ -1381,7 +1517,9 @@ async function scan(baseline=false){
   if(scanning) return;
   scanning = true;
   try{
+    await refreshSubfolders();
     for await (const [rel, handle] of walk(srcHandle)){
+      if(!relAllowed(rel)) continue;   // subpasta desmarcada pelo operador
       if(!isMedia(handle.name)) continue;
       let f;
       try{ f = await handle.getFile(); }catch(e){ continue; }  // ainda em cópia/lock
@@ -1729,7 +1867,7 @@ async function importOne(i){
     renderOutbox();
     const title = inputTitle(targetKey);
     toast(`✔ ${entry.name} → ${title}`);
-    if(targetKey === cfg.inputKey) await loadList(true);
+    await loadList(true);
   }catch(e){
     toast(`Erro: ${e.message}`, true);
   }
@@ -1848,7 +1986,6 @@ $('btnWatch').onclick = async ()=>{
   if(!aiSupported()){ aiLog('Navegador sem suporte (use Chrome/Edge, página em HTTPS ou localhost).', 'err'); return; }
   if(!srcHandle || !destHandle){ aiLog('Conecte a pasta da produção E a pasta de destino primeiro.', 'err'); return; }
   if(!cfg.destPath){ aiLog('Configure a pasta raiz e escolha a subpasta de destino.', 'err'); return; }
-  if(!cfg.inputKey){ aiLog('Selecione o input List no topo da página.', 'err'); return; }
 
   if(!await verifyPermission(srcHandle, false)){ aiLog('Permissão negada na pasta da produção.', 'err'); return; }
   if(!await verifyPermission(destHandle, true)){ aiLog('Permissão negada na pasta de destino.', 'err'); return; }
@@ -1895,6 +2032,8 @@ $('btnWatch').onclick = async ()=>{
     if(s || d || r){
       srcHandle = s; destHandle = d; rootHandle = r;
       updateAIUI();
+      if(s && await s.queryPermission({mode:'read'}) === 'granted') refreshSubfolders();
+      else if(s){ $('subList').innerHTML = '<span class="val none">ligue o auto-verificar (ou clique em Verificar agora) pra listar as subpastas</span>'; }
       updateProgressUI();
       aiLog('Pastas da última sessão lembradas — ao ligar, o navegador pode pedir pra confirmar o acesso (1 clique).', 'info');
     }
@@ -2035,8 +2174,8 @@ $('btnRoteiro').onclick = ()=>{
     toast('Não há arquivos disponíveis — carregue a lista do vMix ou aguarde o auto-verificar copiar algum arquivo.', true);
     return;
   }
-  if(!cfg.inputKey){
-    toast('Selecione um input List no topo primeiro.', true);
+  if(!shownLists().length){
+    toast('Não achei as listas CONTEÚDO HORIZONTAL / VERTICAL neste vMix.', true);
     return;
   }
   const inp = document.createElement('input');
@@ -2137,16 +2276,12 @@ $('rotApply').onclick = async ()=>{
   if(!roteiro.length){ toast('Nenhuma lauda casada — nada a aplicar.', true); return; }
 
   const outboxByPath = new Map(outbox.map(o => [o.path, o]));
-  const currentTitle = (availableInputs.find(i => i.key === cfg.inputKey) || {}).shortTitle || '';
-  const currentOrient = norm(currentTitle).includes('vertical') ? 'vertical'
-                      : norm(currentTitle).includes('horizontal') ? 'horizontal' : 'unknown';
-
-  // Enriquece cada match com orientação (da outbox se possível; senão infere pela lista atual)
+  // Arquivo que já está numa lista fica na mesma lista; o da caixa vai pela proporção
+  const listOfPath = new Map(items.map(it => [it.path, it.listOrder === 1 ? 'vertical' : 'horizontal']));
   const enriched = roteiro.map(r => {
     const oe = outboxByPath.get(r.matchPath);
-    const orient = oe && orientOf(oe) !== 'unknown'
-      ? orientOf(oe)
-      : currentOrient !== 'unknown' ? currentOrient : 'horizontal';
+    const orient = oe && orientOf(oe) !== 'unknown' ? orientOf(oe)
+                 : listOfPath.get(r.matchPath) || 'horizontal';
     return {...r, orientation: orient, fromOutbox: !!oe};
   });
 
@@ -2200,12 +2335,9 @@ $('rotApply').onclick = async ()=>{
 
   for(const [targetKey, matches] of plans){
     const roteiroPaths = matches.map(r => r.matchPath);
-    // Preserva o resto da lista atual se ela é a que estamos reescrevendo
-    let rest = [];
-    if(targetKey === cfg.inputKey){
-      const roteiroSet = new Set(roteiroPaths);
-      rest = items.filter(it => !roteiroSet.has(it.path)).map(it => it.path);
-    }
+    // Preserva o que já estava nessa lista (e não está no roteiro), logo depois do roteiro
+    const roteiroSet = new Set(roteiroPaths);
+    const rest = items.filter(it => it.listKey === targetKey && !roteiroSet.has(it.path)).map(it => it.path);
     const ordered = [...roteiroPaths, ...rest];
     try{
       await fn('ListRemoveAll', {Input: targetKey});
